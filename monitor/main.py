@@ -87,46 +87,33 @@ def _pad(text: str, width: int) -> str:
 # 框线绘制
 # ---------------------------------------------------------------------------
 
-def frame_line(char: str = "=", width: int = W) -> str:
-    return c(CYAN, char * width)
+# 菜单总宽度（内容区，不含两侧 │）
+MW = 73
 
+def _cyan(s: str) -> str:
+    return c(CYAN, s)
 
-def menu_header(title: str):
-    """主菜单标题行。"""
-    print()
-    print(f"  {c(CYAN, '+')}{frame_line('=')}{c(CYAN, '+')}")
-    print(f"  {c(CYAN, '|')}{c(BOLD, f'  {title}')}{_pad('', W - 4 - _display_width(title))}  {c(CYAN, '|')}")
-    print(f"  {c(CYAN, '+')}{frame_line('-', 35)}{c(CYAN, '+')}{frame_line('-', 36)}{c(CYAN, '+')}")
+def _hline(ch: str = "=") -> str:
+    return _cyan(ch * MW)
 
+def _hline_split(ch1: str = "-", pos: int = 36, ch2: str = "-") -> str:
+    return _cyan(ch1 * pos + ch2 * (MW - pos))
 
-def menu_section(title: str):
-    """分区标题。"""
-    print(f"  {c(CYAN, '|')}{c(BOLD, f'  {title}')}{_pad('', W - 4 - _display_width(title))}  {c(CYAN, '|')}")
-    print(f"  {c(CYAN, '+')}{frame_line('=')}{c(CYAN, '+'  )}")
+def _full_row(text: str) -> str:
+    dw = _display_width(_strip_ansi(text))
+    return f"  {_cyan('|')}{text}{' ' * max(0, MW - dw)}{_cyan('|')}"
 
+def _2col_row(left: str, right: str, split: int = 36) -> str:
+    l = _pad(left, split)
+    r = _pad(right, MW - split)
+    return f"  {_cyan('|')}{l}{_cyan('|')}{r}{_cyan('|')}"
 
-def menu_row_2col(left: str, right: str):
-    """双列菜单行。"""
-    left_padded = _pad(left, 35)
-    print(f"  {c(CYAN, '|')}{left_padded}{c(CYAN, '|')}{right}{_pad('', 36 - _display_width(_strip_ansi(right)))}{c(CYAN, '|')}")
-
-
-def menu_row_3col(c1: str, c2: str, c3: str):
-    """三列菜单行。"""
-    col_w = 23
-    p1 = _pad(c1, col_w)
-    p2 = _pad(c2, col_w)
-    p3 = _pad(c3, col_w)
-    print(f"  {c(CYAN, '|')}{p1}{c(CYAN, '|')}{p2}{c(CYAN, '|')}{p3}{c(CYAN, '|')}")
-
-
-def menu_full_row(text: str):
-    """全宽行。"""
-    print(f"  {c(CYAN, '|')}{text}{_pad('', W - _display_width(_strip_ansi(text)))}{c(CYAN, '|')}")
-
-
-def menu_footer():
-    print(f"  {c(CYAN, '+')}{frame_line('=')}{c(CYAN, '+')}")
+def _3col_row(c1: str, c2: str, c3: str) -> str:
+    w = 23  # 23*3 + 2 separators = 71, pad to 73
+    p1 = _pad(c1, w + 1)
+    p2 = _pad(c2, w + 1)
+    p3 = _pad(c3, w)
+    return f"  {_cyan('|')}{p1}{_cyan('|')}{p2}{_cyan('|')}{p3}{_cyan('|')}"
 
 
 def step_frame(title: str):
@@ -875,36 +862,36 @@ def main():
         # 磁盘告警
         alert = check_disk_alert()
         if alert:
-            print(f"\n  {c(CYAN, '+')}{frame_line('=')}{c(CYAN, '+')}")
-            menu_full_row(f"  {c(RED, '!! 磁盘告警')}: 数据目录 {alert['total_mb']} MB / {alert['files']} 个文件")
-            menu_footer()
+            print(f"\n  {_cyan('+')}{_hline('=')}{_cyan('+')}")
+            print(_full_row(f"  {c(RED, '!! 磁盘告警')}: 数据目录 {alert['total_mb']} MB / {alert['files']} 个文件"))
+            print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
 
         # 主菜单
-        print(f"\n  {c(CYAN, '+')}{frame_line('=')}{c(CYAN, '+')}")
-        menu_full_row(f"  {BOLD}AWS Lightsail 监控系统 v{CURRENT_VERSION}{NC}")
-        menu_full_row(f"  服务器: {c(GREEN, SERVER_ALIAS)}  |  IP: {c(GREEN, get_server_ip())}")
-        print(f"  {c(CYAN, '+')}{frame_line('-', 35)}{c(CYAN, '+')}{frame_line('-', 36)}{c(CYAN, '+')}")
+        print(f"\n  {_cyan('+')}{_hline('=')}{_cyan('+')}")
+        print(_full_row(f"  {BOLD}AWS Lightsail 监控系统 v{CURRENT_VERSION}{NC}"))
+        print(_full_row(f"  服务器: {c(GREEN, SERVER_ALIAS)}  |  IP: {c(GREEN, get_server_ip())}"))
+        print(f"  {_cyan('+')}{_hline_split('-', 36, '-')}{_cyan('+')}")
 
-        menu_full_row(f"  {BOLD}服务控制{NC}")
-        print(f"  {c(CYAN, '+')}{frame_line('-', 35)}{c(CYAN, '+')}{frame_line('-', 36)}{c(CYAN, '+')}")
+        print(_full_row(f"  {BOLD}服务控制{NC}"))
+        print(f"  {_cyan('+')}{_hline_split('-', 36, '-')}{_cyan('+')}")
 
-        menu_row_2col(f"  {c(YELLOW, '[1]')}  查看状态", f"  {c(YELLOW, '[5]')}  实时日志")
-        menu_row_2col(f"  {c(YELLOW, '[2]')}  启动服务", f"  {c(YELLOW, '[6]')}  最近日志")
-        menu_row_2col(f"  {c(YELLOW, '[3]')}  停止服务", f"  {c(YELLOW, '[7]')}  手动推送")
-        menu_row_2col(f"  {c(YELLOW, '[4]')}  重启服务", f"  {c(YELLOW, '[8]')}  查看配置")
+        print(_2col_row(f"  {c(YELLOW, '[1]')}  查看状态", f"  {c(YELLOW, '[5]')}  实时日志"))
+        print(_2col_row(f"  {c(YELLOW, '[2]')}  启动服务", f"  {c(YELLOW, '[6]')}  最近日志"))
+        print(_2col_row(f"  {c(YELLOW, '[3]')}  停止服务", f"  {c(YELLOW, '[7]')}  手动推送"))
+        print(_2col_row(f"  {c(YELLOW, '[4]')}  重启服务", f"  {c(YELLOW, '[8]')}  查看配置"))
 
-        print(f"  {c(CYAN, '+')}{frame_line('-', 35)}{c(CYAN, '+')}{frame_line('-', 36)}{c(CYAN, '+')}")
-        menu_full_row(f"  {BOLD}系统管理{NC}")
-        print(f"  {c(CYAN, '+')}{frame_line('=')}{c(CYAN, '+')}{frame_line('=')}{c(CYAN, '+')}")
+        print(f"  {_cyan('+')}{_hline_split('-', 36, '-')}{_cyan('+')}")
+        print(_full_row(f"  {BOLD}系统管理{NC}"))
+        print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
 
         ai_st = c(GREEN, "已开启") if XFYUN_ENABLED else c(DIM, "已关闭")
-        menu_row_3col(f"  {c(YELLOW, '[9]')}  编辑配置", f"  {c(YELLOW, '[10]')} 开机自启", f"  {c(YELLOW, '[11]')} 网卡与下载")
-        menu_row_3col(f"  {c(YELLOW, '[12]')} 卸载", f"  {c(YELLOW, '[13]')} 一键更新", f"  {c(YELLOW, '[14]')} 自动面板")
-        menu_row_3col(f"  {c(YELLOW, '[15]')} 流量与带宽", f"  {c(YELLOW, '[16]')} 告警设置", f"  {c(YELLOW, '[17]')} AI分析:{ai_st}")
+        print(_3col_row(f"  {c(YELLOW, '[9]')}  编辑配置", f"  {c(YELLOW, '[10]')} 开机自启", f"  {c(YELLOW, '[11]')} 网卡与下载"))
+        print(_3col_row(f"  {c(YELLOW, '[12]')} 卸载", f"  {c(YELLOW, '[13]')} 一键更新", f"  {c(YELLOW, '[14]')} 自动面板"))
+        print(_3col_row(f"  {c(YELLOW, '[15]')} 流量与带宽", f"  {c(YELLOW, '[16]')} 告警设置", f"  {c(YELLOW, '[17]')} AI分析:{ai_st}"))
 
-        print(f"  {c(CYAN, '+')}{frame_line('=')}{c(CYAN, '+')}{frame_line('=')}{c(CYAN, '+')}")
-        menu_full_row(f"  {c(DIM, '[0]')}  {c(DIM, '退出')}")
-        print(f"  {c(CYAN, '+')}{frame_line('=')}{c(CYAN, '+')}")
+        print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
+        print(_full_row(f"  {c(DIM, '[0]')}  {c(DIM, '退出')}"))
+        print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
 
         try:
             choice = input(f"\n  {c(YELLOW, '请选择')} [0-17]: ").strip()
