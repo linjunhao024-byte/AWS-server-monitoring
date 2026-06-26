@@ -284,6 +284,23 @@ def action_status():
     pause()
 
 
+def _verify_service(svc: str, expected: str, desc: str):
+    """验证服务实际状态。expected: "active" 或 "inactive"。"""
+    time.sleep(2)
+    actual = _systemctl_status(svc)
+    if expected == "active":
+        if "active" in actual:
+            step_row(f"  {c(GREEN, '✓')} {desc} 已启动 {c(GREEN, '(running)')}")
+        else:
+            step_row(f"  {c(RED, '✗')} {desc} 启动失败 {c(RED, f'({actual})')}")
+            step_row(f"  {c(DIM, '  查看日志: journalctl -u ' + svc + ' -n 20')}")
+    else:
+        if "active" not in actual:
+            step_row(f"  {c(GREEN, '✓')} {desc} 已停止")
+        else:
+            step_row(f"  {c(YELLOW, '⚠')} {desc} 停止失败 {c(RED, f'({actual})')}")
+
+
 def action_start():
     """[2] 启动服务"""
     clear_screen()
@@ -296,11 +313,9 @@ def action_start():
            [("bandwidth-monitor", "带宽采集")] if idx == 0 else [("route-monitor", "路由监测")]
     step_frame("执行结果")
     for svc, desc in svcs:
-        r = subprocess.run(["systemctl", "start", svc], capture_output=True, timeout=10)
-        if r.returncode == 0:
-            step_row(f"  {c(GREEN, '✓')} {desc} 已启动")
-        else:
-            step_row(f"  {c(RED, '✗')} {desc} 启动失败")
+        step_row(f"  正在启动 {desc}...")
+        subprocess.run(["systemctl", "start", svc], capture_output=True, timeout=10)
+        _verify_service(svc, "active", desc)
     step_end()
     pause()
 
@@ -317,11 +332,9 @@ def action_stop():
            [("bandwidth-monitor", "带宽采集")] if idx == 0 else [("route-monitor", "路由监测")]
     step_frame("执行结果")
     for svc, desc in svcs:
-        r = subprocess.run(["systemctl", "stop", svc], capture_output=True, timeout=10)
-        if r.returncode == 0:
-            step_row(f"  {c(GREEN, '✓')} {desc} 已停止")
-        else:
-            step_row(f"  {c(RED, '✗')} {desc} 停止失败")
+        step_row(f"  正在停止 {desc}...")
+        subprocess.run(["systemctl", "stop", svc], capture_output=True, timeout=10)
+        _verify_service(svc, "inactive", desc)
     step_end()
     pause()
 
@@ -338,11 +351,9 @@ def action_restart():
            [("bandwidth-monitor", "带宽采集")] if idx == 0 else [("route-monitor", "路由监测")]
     step_frame("执行结果")
     for svc, desc in svcs:
-        r = subprocess.run(["systemctl", "restart", svc], capture_output=True, timeout=10)
-        if r.returncode == 0:
-            step_row(f"  {c(GREEN, '✓')} {desc} 已重启")
-        else:
-            step_row(f"  {c(RED, '✗')} {desc} 重启失败")
+        step_row(f"  正在重启 {desc}...")
+        subprocess.run(["systemctl", "restart", svc], capture_output=True, timeout=10)
+        _verify_service(svc, "active", desc)
     step_end()
     pause()
 
@@ -1753,6 +1764,29 @@ def main():
         print(f"\n  {_cyan('+')}{_hline('=')}{_cyan('+')}")
         print(_full_row(f"  {BOLD}AWS Lightsail 监控系统 v{CURRENT_VERSION}{NC}"))
         print(_full_row(f"  服务器: {c(GREEN, SERVER_ALIAS)}  |  IP: {c(GREEN, get_server_ip())}"))
+
+        # 状态概览
+        mon_st = _systemctl_status("bandwidth-monitor")
+        rt_st = _systemctl_status("route-monitor")
+        mon_icon = c(GREEN, "●") if "active" in mon_st else c(RED, "●")
+        rt_icon = c(GREEN, "●") if "active" in rt_st else c(RED, "●")
+        # 最新数据文件
+        from analyzer import find_latest_file
+        _latest = find_latest_file()
+        if _latest:
+            _age = int(time.time() - os.path.getmtime(_latest))
+            if _age < 120:
+                data_st = c(GREEN, f"{_age}s前")
+            elif _age < 3600:
+                data_st = c(YELLOW, f"{_age // 60}m前")
+            else:
+                data_st = c(RED, f"{_age // 3600}h前")
+        else:
+            data_st = c(DIM, "无数据")
+        # 钉钉/TG 状态
+        dt_icon = c(GREEN, "钉✓") if DINGTALK_WEBHOOK else c(DIM, "钉✗")
+        tg_icon = c(GREEN, "TG✓") if TG_BOT_TOKEN else c(DIM, "TG✗")
+        print(_full_row(f"  {mon_icon}采集  {rt_icon}路由  数据:{data_st}  {dt_icon} {tg_icon}"))
         print(f"  {_cyan('+')}{_hline_split('-', 36, '-')}{_cyan('+')}")
 
         print(_full_row(f"  {BOLD}服务控制{NC}"))
