@@ -217,6 +217,18 @@ python3 /opt/bandwidth_monitor/main.py
 
 ---
 
+## 🗑️ 卸载 | Uninstall
+
+```bash
+# 保留历史数据卸载
+sudo bash uninstall.sh
+
+# 彻底清除（包括数据目录）
+sudo bash uninstall.sh --purge
+```
+
+---
+
 ## 🔧 服务管理 | Service Management
 
 所有守护进程由 systemd 托管，支持开机自启与故障自动重启：
