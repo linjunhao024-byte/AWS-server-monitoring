@@ -393,7 +393,7 @@ def build_email_html(traffic: TrafficData, chart_path: str = None) -> str:
 <body>
     <div class="container">
         <div class="header">
-            <h1>📊 服务器流量周报</h1>
+            <h1>📊 LIN-Monitor 流量周报</h1>
             <p>第{week_info['week']}周 ({week_info['week_start'].strftime('%Y-%m-%d')} ~ {week_info['week_end'].strftime('%Y-%m-%d')})</p>
         </div>
 
@@ -468,7 +468,7 @@ def build_email_html(traffic: TrafficData, chart_path: str = None) -> str:
 
         <div class="footer">
             <p>📅 生成时间：{today.strftime('%Y-%m-%d %H:%M:%S')}</p>
-            <p>💡 本邮件由自动化监控脚本发送</p>
+            <p>💡 Powered by <strong>LIN-Monitor</strong></p>
         </div>
     </div>
 </body>

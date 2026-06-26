@@ -760,12 +760,24 @@ main() {
 
     # 欢迎界面
     echo ""
+    echo -e "${CYAN}  +=========================================+${NC}"
+    echo -e "${CYAN}  |                                         |${NC}"
+    echo -e "${CYAN}  |${NC}         _     ___  _   _                ${CYAN}|${NC}"
+    echo -e "${CYAN}  |${NC}        | |   |_ _|| \\ | |               ${CYAN}|${NC}"
+    echo -e "${CYAN}  |${NC}        | |    | | |  \\| |               ${CYAN}|${NC}"
+    echo -e "${CYAN}  |${NC}        | |___ | | | |\\  |               ${CYAN}|${NC}"
+    echo -e "${CYAN}  |${NC}        |_____||___|_| \\_|               ${CYAN}|${NC}"
+    echo -e "${CYAN}  |${NC}                                         ${CYAN}|${NC}"
+    echo -e "${CYAN}  |${NC}          ${BOLD}M O N I T O R${NC}                  ${CYAN}|${NC}"
+    echo -e "${CYAN}  |${NC}                                         ${CYAN}|${NC}"
+    echo -e "${CYAN}  +=========================================+${NC}"
+    echo ""
     frame_top
-    frame_title "AWS Lightsail 服务器监控系统 v3.0 — 安装向导"
+    frame_title "LIN-Monitor 安装向导"
     frame_sep
     frame_row ""
-    frame_row "  功能:  1Hz 带宽采集 · 积分机制反推 · 路由监测"
-    frame_row "         流量日报 · 邮件周报 · 钉钉推送 · LLM 分析"
+    frame_row "  1Hz 带宽采集 · 积分机制反推 · 路由监测"
+    frame_row "  流量日报 · 邮件周报 · 钉钉/Telegram · AI 分析"
     frame_row ""
     frame_bottom
 

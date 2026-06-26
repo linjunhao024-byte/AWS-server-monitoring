@@ -1455,6 +1455,11 @@ def _handle_tg_callback(callback_data: str, query_id: str) -> tuple[str, list]:
     return "❓ 未知操作", _tg_main_keyboard()
 
 
+def _tg_result(text: str, keyboard: list) -> tuple[str, list]:
+    """给 Telegram 结果加上签名。"""
+    return f"{text}\n\n{SIGNATURE}", keyboard
+
+
 def _get_last_logs(service: str, lines: int = 15) -> str:
     """获取服务最近日志。"""
     try:
@@ -1489,6 +1494,8 @@ def _tg_poll_thread():
                 data = callback.get("data", "")
                 query_id = callback.get("id", "")
                 result_text, keyboard = _handle_tg_callback(data, query_id)
+                # 统一加签名
+                result_text = f"{result_text}\n\n{SIGNATURE}"
                 send_telegram_keyboard(result_text, keyboard)
 
         time.sleep(1)
@@ -1715,10 +1722,12 @@ def main():
 
     # CLI 快捷命令（非交互模式）
     if args.check or args.status:
+        print(f"\n  LIN-Monitor v{CURRENT_VERSION}")
         results = health_check()
         for r in results:
             icon = {"ok": "✓", "warn": "⚠", "error": "✗"}.get(r["status"], "?")
             print(f"  {icon}  {r['component']:<12} {r['message']}")
+        print(f"\n  {SIGNATURE}")
         return
     if args.analyze:
         from analyzer import find_latest_file, load_csv_files, reverse_engineer_credits, generate_report
@@ -1733,6 +1742,7 @@ def main():
         analysis = reverse_engineer_credits(rows)
         report = generate_report(rows, analysis, [latest])
         print(report)
+        print(f"\n{SIGNATURE}")
         return
     if args.report:
         from reporter import get_traffic_data, build_dingtalk_message
@@ -1744,13 +1754,15 @@ def main():
             print(f"  {c(GREEN, '✓')} 日报已发送")
         else:
             print(f"  {c(RED, '✗')} 无法获取流量数据")
+        print(f"\n{SIGNATURE}")
         return
     if args.rotate:
         result = rotate_logs()
         print(f"  删除 {result['deleted']} 个文件，保留 {result['kept']} 个，释放 {result['freed_mb']} MB")
+        print(f"\n{SIGNATURE}")
         return
     if args.version:
-        print(f"  当前版本: {c(GREEN, CURRENT_VERSION)}")
+        print(f"  LIN-Monitor v{c(GREEN, CURRENT_VERSION)}")
         ver = check_version()
         if ver["update_available"]:
             print(f"  {c(YELLOW, '发现新版本')} {c(GREEN, ver['latest'])}")
