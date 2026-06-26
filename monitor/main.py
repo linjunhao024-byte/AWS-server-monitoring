@@ -411,116 +411,336 @@ def action_view_config():
     pause()
 
 
+def _config_display():
+    """编辑配置的显示面板。"""
+    import config as cfg
+    wh_st = c(GREEN, _mask(DINGTALK_WEBHOOK)) if DINGTALK_WEBHOOK else c(DIM, "(未配置)")
+    xf_st = c(GREEN, "已启用") if XFYUN_ENABLED else c(DIM, "已禁用")
+    em_st = c(GREEN, "已启用") if EMAIL_ENABLED else c(DIM, "已禁用")
+    rt_st = c(GREEN, "已开启") if ROUTE_ALERT_ENABLED else c(DIM, "已关闭")
+
+    print()
+    print(f"  {_cyan('+')}{_hline('-')}{_cyan('+')}")
+    print(_full_row(f"  {BOLD}编辑配置{NC}"))
+    print(f"  {_cyan('+')}{_hline('-')}{_cyan('+')}")
+    print(_full_row(""))
+    print(_2col_row(f"  {c(YELLOW, '[1]')}  服务器名称  {c(GREEN, SERVER_ALIAS)}", f"  {c(YELLOW, '[5]')}  推送方式    {wh_st}"))
+    print(_2col_row(f"  {c(YELLOW, '[2]')}  网卡        {c(GREEN, INTERFACE)}", f"  {c(YELLOW, '[6]')}  邮件开关    {em_st}"))
+    print(_2col_row(f"  {c(YELLOW, '[3]')}  路由目标    {c(GREEN, ROUTE_TARGET)}", f"  {c(YELLOW, '[7]')}  AI模型      {xf_st}"))
+    print(_2col_row(f"  {c(YELLOW, '[4]')}  检测间隔    {ROUTE_INTERVAL}秒", f"  {c(YELLOW, '[8]')}  路由告警    {rt_st}"))
+    print(_full_row(""))
+    print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
+    print(_full_row(f"  {c(YELLOW, '[9]')}  钉钉配置        {c(YELLOW, '[10]')} 邮件配置        {c(YELLOW, '[11]')} 讯飞配置"))
+    print(_full_row(f"  {c(YELLOW, '[12]')} 运维参数"))
+    print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
+    print(_full_row(f"  {c(DIM, '[0]')}  {c(DIM, '返回')}"))
+    print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
+
+
 def action_edit_config():
     """[9] 编辑配置"""
-    clear_screen()
-    step_frame("编辑配置")
     import config as cfg
 
-    # 显示当前配置概览
-    step_row(c(BOLD, "  当前配置"))
-    step_sep()
-    step_row(f"  1. 服务器别名     {c(GREEN, SERVER_ALIAS)}")
-    step_row(f"  2. 网卡           {c(GREEN, INTERFACE)}")
-    step_row(f"  3. 钉钉 Webhook   {c(GREEN, _mask(DINGTALK_WEBHOOK)) if DINGTALK_WEBHOOK else c(DIM, '(未配置)')}")
-    step_row(f"  4. 钉钉 Secret    {c(GREEN, _mask(DINGTALK_SECRET)) if DINGTALK_SECRET else c(DIM, '(未配置)')}")
-    step_row(f"  5. 讯飞 API Key   {c(GREEN, _mask(XFYUN_API_KEY)) if XFYUN_API_KEY else c(DIM, '(未配置)')}")
-    step_row(f"  6. 邮件开关       {'已启用' if EMAIL_ENABLED else c(DIM, '已禁用')}")
-    step_row(f"  7. SMTP 服务器    {SMTP_SERVER}:{SMTP_PORT} {'(SSL)' if SMTP_USE_SSL else ''}")
-    step_row(f"  8. SMTP 用户      {SMTP_USERNAME or c(DIM, '(未配置)')}")
-    step_row(f"  9. SMTP 密码      {'******' if SMTP_PASSWORD else c(DIM, '(未配置)')}")
-    step_row(f"  10. 收件人        {', '.join(EMAIL_RECIPIENTS) if EMAIL_RECIPIENTS else c(DIM, '(未配置)')}")
-    step_row(f"  11. 路由目标      {c(GREEN, ROUTE_TARGET)}")
-    step_row(f"  12. 路由间隔      {ROUTE_INTERVAL} 秒")
-    step_row(f"  13. 日志保留      {LOG_RETENTION_DAYS} 天")
-    step_row(f"  14. 磁盘告警      {DISK_ALERT_MB} MB")
-    step_row(f"  15. 路由告警      {'已开启' if ROUTE_ALERT_ENABLED else c(DIM, '已关闭')}")
+    while True:
+        clear_screen()
+        _config_display()
 
-    step_sep()
-    step_row(f"  {c(DIM, '输入编号修改对应项，0 返回')}")
-    step_end()
+        try:
+            ch = input(f"\n  {c(YELLOW, '请选择')} [0-12]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
 
-    try:
-        ch = input(f"  {c(YELLOW, '选择编号')} [0-15]: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return
+        if ch == "0" or not ch:
+            return
 
-    if ch == "0" or not ch:
-        return
+        if ch == "1":
+            clear_screen()
+            step_frame("服务器名称")
+            step_row(f"  当前: {c(GREEN, SERVER_ALIAS)}")
+            step_end()
+            alias = input(f"  输入新名称: ").strip()
+            if alias:
+                cfg.SERVER_ALIAS = alias
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已保存")
 
-    if ch == "1":
-        alias = input(f"  服务器别名 [{c(GREEN, SERVER_ALIAS)}]: ").strip()
-        if alias: cfg.SERVER_ALIAS = alias
-    elif ch == "2":
-        iface = input(f"  网卡名称 [{c(GREEN, INTERFACE)}]: ").strip()
-        if iface: cfg.INTERFACE = iface
-    elif ch == "3":
-        wh = input(f"  Webhook URL: ").strip()
-        if wh: cfg.DINGTALK_WEBHOOK = wh
-    elif ch == "4":
-        sec = input(f"  Secret (SEC开头): ").strip()
-        if sec: cfg.DINGTALK_SECRET = sec
-    elif ch == "5":
-        key = input(f"  讯飞 API Key: ").strip()
-        if key:
-            cfg.XFYUN_API_KEY = key
-            cfg.XFYUN_ENABLED = True
+        elif ch == "2":
+            clear_screen()
+            step_frame("网卡设置")
+            step_row(f"  当前: {c(GREEN, INTERFACE)}")
+            step_sep()
+            from data_sources import list_physical_interfaces
+            ifaces = list_physical_interfaces()
+            for iface in ifaces:
+                marker = c(GREEN, " <-- 当前") if iface == INTERFACE else ""
+                step_row(f"  {iface}{marker}")
+            step_end()
+            iface = input(f"  输入网卡名称: ").strip()
+            if iface:
+                cfg.INTERFACE = iface
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已保存")
+
+        elif ch == "3":
+            clear_screen()
+            step_frame("路由目标")
+            step_row(f"  当前: {c(GREEN, ROUTE_TARGET)}")
+            step_end()
+            t = input(f"  输入新目标: ").strip()
+            if t:
+                cfg.ROUTE_TARGET = t
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已保存")
+
+        elif ch == "4":
+            clear_screen()
+            step_frame("检测间隔")
+            step_row(f"  当前: {ROUTE_INTERVAL} 秒")
+            step_end()
+            i = input(f"  输入新间隔(秒): ").strip()
+            if i:
+                try:
+                    cfg.ROUTE_INTERVAL = int(i)
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+                except ValueError:
+                    print(f"  {c(RED, '无效数字')}")
+
+        elif ch == "5":
+            clear_screen()
+            step_frame("推送方式")
+            wh_st = c(GREEN, _mask(DINGTALK_WEBHOOK)) if DINGTALK_WEBHOOK else c(DIM, "(未配置)")
+            step_row(f"  钉钉 Webhook: {wh_st}")
+            step_row(f"  钉钉 Secret:  {c(GREEN, _mask(DINGTALK_SECRET)) if DINGTALK_SECRET else c(DIM, '(未配置)')}")
+            step_sep()
+            step_row(f"  {c(YELLOW, '[1]')} 修改 Webhook")
+            step_row(f"  {c(YELLOW, '[2]')} 修改 Secret")
+            step_row(f"  {c(YELLOW, '[3]')} 清除钉钉配置")
+            step_end()
+            sub = input(f"  选择: ").strip()
+            if sub == "1":
+                wh = input(f"  Webhook URL: ").strip()
+                if wh:
+                    cfg.DINGTALK_WEBHOOK = wh
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "2":
+                sec = input(f"  Secret: ").strip()
+                if sec:
+                    cfg.DINGTALK_SECRET = sec
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "3":
+                cfg.DINGTALK_WEBHOOK = ""
+                cfg.DINGTALK_SECRET = ""
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已清除")
+
+        elif ch == "6":
+            clear_screen()
+            step_frame("邮件开关")
+            st = "已启用" if EMAIL_ENABLED else "已禁用"
+            step_row(f"  当前: {st}")
+            step_sep()
+            step_row(f"  {c(YELLOW, '[1]')} 启用")
+            step_row(f"  {c(YELLOW, '[2]')} 禁用")
+            step_end()
+            sub = input(f"  选择: ").strip()
+            if sub == "1":
+                cfg.EMAIL_ENABLED = True
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已启用")
+            elif sub == "2":
+                cfg.EMAIL_ENABLED = False
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已禁用")
+
+        elif ch == "7":
+            clear_screen()
+            step_frame("AI模型")
+            st = c(GREEN, "已启用") if XFYUN_ENABLED else c(DIM, "已禁用")
+            step_row(f"  讯飞星火: {st}")
+            step_row(f"  模型:     {XFYUN_MODEL}")
+            step_sep()
+            step_row(f"  {c(YELLOW, '[1]')} 修改 API Key")
+            step_row(f"  {c(YELLOW, '[2]')} 修改模型名称")
+            step_row(f"  {c(YELLOW, '[3]')} 禁用 AI")
+            step_end()
+            sub = input(f"  选择: ").strip()
+            if sub == "1":
+                key = input(f"  API Key: ").strip()
+                if key:
+                    cfg.XFYUN_API_KEY = key
+                    cfg.XFYUN_ENABLED = True
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "2":
+                m = input(f"  模型名称 [{XFYUN_MODEL}]: ").strip()
+                if m:
+                    cfg.XFYUN_MODEL = m
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "3":
+                cfg.XFYUN_API_KEY = ""
+                cfg.XFYUN_ENABLED = False
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已禁用")
+
+        elif ch == "8":
+            cfg.ROUTE_ALERT_ENABLED = not ROUTE_ALERT_ENABLED
+            save_config()
+            st = "已开启" if cfg.ROUTE_ALERT_ENABLED else "已关闭"
+            clear_screen()
+            step_frame("路由告警")
+            step_row(f"  {c(GREEN, '✓')} 路由变化告警 {st}")
+            step_end()
+
+        elif ch == "9":
+            clear_screen()
+            step_frame("钉钉配置")
+            wh_st = c(GREEN, _mask(DINGTALK_WEBHOOK)) if DINGTALK_WEBHOOK else c(DIM, "(未配置)")
+            sec_st = c(GREEN, _mask(DINGTALK_SECRET)) if DINGTALK_SECRET else c(DIM, "(未配置)")
+            step_row(f"  Webhook: {wh_st}")
+            step_row(f"  Secret:  {sec_st}")
+            step_sep()
+            step_row(f"  {c(YELLOW, '[1]')} 修改 Webhook")
+            step_row(f"  {c(YELLOW, '[2]')} 修改 Secret")
+            step_row(f"  {c(YELLOW, '[3]')} 清除")
+            step_end()
+            sub = input(f"  选择: ").strip()
+            if sub == "1":
+                wh = input(f"  Webhook URL: ").strip()
+                if wh:
+                    cfg.DINGTALK_WEBHOOK = wh
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "2":
+                sec = input(f"  Secret: ").strip()
+                if sec:
+                    cfg.DINGTALK_SECRET = sec
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "3":
+                cfg.DINGTALK_WEBHOOK = ""
+                cfg.DINGTALK_SECRET = ""
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已清除")
+
+        elif ch == "10":
+            clear_screen()
+            step_frame("邮件配置")
+            em_st = c(GREEN, "已启用") if EMAIL_ENABLED else c(DIM, "已禁用")
+            step_row(f"  状态:     {em_st}")
+            step_row(f"  SMTP:     {SMTP_SERVER}:{SMTP_PORT} {'(SSL)' if SMTP_USE_SSL else ''}")
+            step_row(f"  用户:     {SMTP_USERNAME or c(DIM, '(未配置)')}")
+            step_row(f"  收件人:   {', '.join(EMAIL_RECIPIENTS) if EMAIL_RECIPIENTS else c(DIM, '(未配置)')}")
+            step_sep()
+            step_row(f"  {c(YELLOW, '[1]')} 开关邮件")
+            step_row(f"  {c(YELLOW, '[2]')} SMTP 服务器/端口/SSL")
+            step_row(f"  {c(YELLOW, '[3]')} SMTP 用户名")
+            step_row(f"  {c(YELLOW, '[4]')} SMTP 密码")
+            step_row(f"  {c(YELLOW, '[5]')} 收件人")
+            step_end()
+            sub = input(f"  选择: ").strip()
+            if sub == "1":
+                cfg.EMAIL_ENABLED = not EMAIL_ENABLED
+                save_config()
+                st = "已启用" if cfg.EMAIL_ENABLED else "已禁用"
+                print(f"  {c(GREEN, '✓')} 邮件 {st}")
+            elif sub == "2":
+                srv = input(f"  SMTP 服务器 [{SMTP_SERVER}]: ").strip()
+                if srv: cfg.SMTP_SERVER = srv
+                prt = input(f"  SMTP 端口 [{SMTP_PORT}]: ").strip()
+                if prt:
+                    try: cfg.SMTP_PORT = int(prt)
+                    except ValueError: pass
+                ssl = input(f"  使用 SSL？(Y/n): ").strip().lower()
+                cfg.SMTP_USE_SSL = ssl != 'n'
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "3":
+                u = input(f"  SMTP 用户名: ").strip()
+                if u:
+                    cfg.SMTP_USERNAME = u
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "4":
+                p = input(f"  SMTP 密码: ").strip()
+                if p:
+                    cfg.SMTP_PASSWORD = p
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "5":
+                r = input(f"  收件人（逗号分隔）: ").strip()
+                if r:
+                    cfg.EMAIL_RECIPIENTS = [x.strip() for x in r.split(",") if x.strip()]
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+
+        elif ch == "11":
+            clear_screen()
+            step_frame("讯飞配置")
+            xf_st = c(GREEN, "已启用") if XFYUN_ENABLED else c(DIM, "已禁用")
+            step_row(f"  状态:     {xf_st}")
+            step_row(f"  Key:      {c(GREEN, _mask(XFYUN_API_KEY)) if XFYUN_API_KEY else c(DIM, '(未配置)')}")
+            step_row(f"  模型:     {XFYUN_MODEL}")
+            step_sep()
+            step_row(f"  {c(YELLOW, '[1]')} 修改 API Key")
+            step_row(f"  {c(YELLOW, '[2]')} 修改模型名称")
+            step_row(f"  {c(YELLOW, '[3]')} 禁用")
+            step_end()
+            sub = input(f"  选择: ").strip()
+            if sub == "1":
+                key = input(f"  API Key: ").strip()
+                if key:
+                    cfg.XFYUN_API_KEY = key
+                    cfg.XFYUN_ENABLED = True
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "2":
+                m = input(f"  模型名称 [{XFYUN_MODEL}]: ").strip()
+                if m:
+                    cfg.XFYUN_MODEL = m
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "3":
+                cfg.XFYUN_API_KEY = ""
+                cfg.XFYUN_ENABLED = False
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已禁用")
+
+        elif ch == "12":
+            clear_screen()
+            step_frame("运维参数")
+            step_row(f"  日志保留:  {LOG_RETENTION_DAYS} 天")
+            step_row(f"  磁盘告警:  {DISK_ALERT_MB} MB")
+            step_sep()
+            step_row(f"  {c(YELLOW, '[1]')} 修改日志保留天数")
+            step_row(f"  {c(YELLOW, '[2]')} 修改磁盘告警阈值")
+            step_end()
+            sub = input(f"  选择: ").strip()
+            if sub == "1":
+                d = input(f"  日志保留天数 [{LOG_RETENTION_DAYS}]: ").strip()
+                if d:
+                    try:
+                        cfg.LOG_RETENTION_DAYS = int(d)
+                        save_config()
+                        print(f"  {c(GREEN, '✓')} 已保存")
+                    except ValueError:
+                        print(f"  {c(RED, '无效数字')}")
+            elif sub == "2":
+                m = input(f"  磁盘告警阈值(MB) [{DISK_ALERT_MB}]: ").strip()
+                if m:
+                    try:
+                        cfg.DISK_ALERT_MB = int(m)
+                        save_config()
+                        print(f"  {c(GREEN, '✓')} 已保存")
+                    except ValueError:
+                        print(f"  {c(RED, '无效数字')}")
+
         else:
-            cfg.XFYUN_API_KEY = ""
-            cfg.XFYUN_ENABLED = False
-    elif ch == "6":
-        if input(f"  启用邮件？(y/n): ").strip().lower() == 'y':
-            cfg.EMAIL_ENABLED = True
-        else:
-            cfg.EMAIL_ENABLED = False
-    elif ch == "7":
-        srv = input(f"  SMTP 服务器 [{SMTP_SERVER}]: ").strip()
-        if srv: cfg.SMTP_SERVER = srv
-        prt = input(f"  SMTP 端口 [{SMTP_PORT}]: ").strip()
-        if prt:
-            try: cfg.SMTP_PORT = int(prt)
-            except ValueError: pass
-        ssl = input(f"  使用 SSL？(Y/n): ").strip().lower()
-        cfg.SMTP_USE_SSL = ssl != 'n'
-    elif ch == "8":
-        u = input(f"  SMTP 用户名 [{SMTP_USERNAME or ''}]: ").strip()
-        if u: cfg.SMTP_USERNAME = u
-    elif ch == "9":
-        p = input(f"  SMTP 密码: ").strip()
-        if p: cfg.SMTP_PASSWORD = p
-    elif ch == "10":
-        r = input(f"  收件人（逗号分隔）: ").strip()
-        if r: cfg.EMAIL_RECIPIENTS = [x.strip() for x in r.split(",") if x.strip()]
-    elif ch == "11":
-        t = input(f"  路由目标 [{ROUTE_TARGET}]: ").strip()
-        if t: cfg.ROUTE_TARGET = t
-    elif ch == "12":
-        i = input(f"  检测间隔(秒) [{ROUTE_INTERVAL}]: ").strip()
-        if i:
-            try: cfg.ROUTE_INTERVAL = int(i)
-            except ValueError: print(f"  {c(YELLOW, '无效数字')}")
-    elif ch == "13":
-        d = input(f"  日志保留天数 [{LOG_RETENTION_DAYS}]: ").strip()
-        if d:
-            try: cfg.LOG_RETENTION_DAYS = int(d)
-            except ValueError: print(f"  {c(YELLOW, '无效数字')}")
-    elif ch == "14":
-        m = input(f"  磁盘告警阈值(MB) [{DISK_ALERT_MB}]: ").strip()
-        if m:
-            try: cfg.DISK_ALERT_MB = int(m)
-            except ValueError: print(f"  {c(YELLOW, '无效数字')}")
-    elif ch == "15":
-        cfg.ROUTE_ALERT_ENABLED = not ROUTE_ALERT_ENABLED
-        st = "已开启" if cfg.ROUTE_ALERT_ENABLED else "已关闭"
-        print(f"  {c(GREEN, '✓')} 路由告警 {st}")
-    else:
-        print(f"  {c(RED, '无效编号')}")
-        pause()
-        return
-
-    save_config()
-    print(f"  {c(GREEN, '✓')} 配置已保存")
-    pause()
+            print(f"  {c(RED, '无效输入')}")
+            pause()
 
 
 def action_boot_toggle():
