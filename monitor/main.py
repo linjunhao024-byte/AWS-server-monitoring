@@ -1850,6 +1850,7 @@ def main():
 
         print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
         print(_2col_row(f"  {c(DIM, '[0]')}  {c(DIM, '退出')}", f"  {c(DIM, '[A]')}  {c(DIM, '关于')}"))
+        print(_full_row(f"  {c(DIM, SIGNATURE)}"))
         print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
 
         try:

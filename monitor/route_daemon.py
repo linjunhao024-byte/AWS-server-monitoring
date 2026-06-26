@@ -36,7 +36,7 @@ def log_route(output_dir: str, target: str, hops: list[str],
     log_path = os.path.join(output_dir, f"route_log_{today_label()}.txt")
 
     with open(log_path, "a", encoding="utf-8") as f:
-        f.write(f"\n[{now_iso()}] target={target}\n")
+        f.write(f"\n[LIN-Monitor {now_iso()}] target={target}\n")
 
         if change_info and change_info.get("changed"):
             f.write(f"  ⚠️  路由变化! 变化位置: {change_info['change_hop']}\n")
@@ -73,7 +73,7 @@ def build_route_alert(target: str, change_info: dict, hops: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 def run_monitor(target: str, interval: int, output_dir: str):
-    print(f"[{now_iso()}] 路由监测启动 | 目标={target} | 间隔={interval}秒 | 输出={output_dir}")
+    print(f"[{now_iso()}] LIN-Monitor 路由监测启动 | 目标={target} | 间隔={interval}秒 | 输出={output_dir}")
 
     # 钉钉启动通知
     try:
@@ -138,7 +138,7 @@ def run_monitor(target: str, interval: int, output_dir: str):
                 break
             time.sleep(1)
 
-    print(f"[{now_iso()}] 路由监测已停止。累计检测到 {change_count} 次路由变化。")
+    print(f"[{now_iso()}] LIN-Monitor 路由监测已停止。累计检测到 {change_count} 次路由变化。")
 
     # 钉钉停止通知
     try:

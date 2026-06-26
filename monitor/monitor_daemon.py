@@ -112,7 +112,7 @@ class DailyCSVWriter:
     def flush_and_rotate(self) -> str:
         """写入峰值摘要 → 关闭文件 → 返回文件路径。"""
         path = self._file_path()
-        self._file.write("\n# ===== DAILY SUMMARY =====\n")
+        self._file.write("\n# ===== DAILY SUMMARY (LIN-Monitor) =====\n")
         self._file.write(f"# date: {self._date_label}\n")
         self._file.write(f"# interface: {self._interface}\n")
         self._file.write(f"# total_records: {self._total_records}\n")
@@ -172,7 +172,7 @@ def run_monitor(interface: str, output_dir: str):
     ping_thread = threading.Thread(target=_ping_background, daemon=True)
     ping_thread.start()
 
-    print(f"[{now_iso()}] Profiling 监控启动 | 网卡={interface} | 采样=1Hz | "
+    print(f"[{now_iso()}] LIN-Monitor 带宽采集启动 | 网卡={interface} | 采样=1Hz | "
           f"Ping目标={PING_GW},{PING_EXT}(后台{PING_INTERVAL}s) | 输出={output_dir}")
 
     # 钉钉启动通知
@@ -241,7 +241,7 @@ def run_monitor(interface: str, output_dir: str):
         prev_time = now_mono
 
     writer.close()
-    print(f"[{now_iso()}] 监控已停止。")
+    print(f"[{now_iso()}] LIN-Monitor 带宽采集已停止。")
 
     # 钉钉停止通知
     try:

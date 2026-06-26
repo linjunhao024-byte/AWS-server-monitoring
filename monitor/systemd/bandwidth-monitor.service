@@ -1,5 +1,5 @@
 [Unit]
-Description=AWS Network Bandwidth 1Hz Sampling Daemon
+Description=LIN-Monitor Bandwidth 1Hz Sampling Daemon
 After=network-online.target
 Wants=network-online.target
 

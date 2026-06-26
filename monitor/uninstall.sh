@@ -81,7 +81,7 @@ fi
 clear
 echo ""
 frame_top
-frame_title "AWS Lightsail 服务器监控系统 v3.0 — 卸载向导"
+frame_title "LIN-Monitor 卸载向导"
 frame_sep
 frame_row ""
 frame_row "  此脚本将："

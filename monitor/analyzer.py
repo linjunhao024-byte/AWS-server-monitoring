@@ -755,6 +755,7 @@ if __name__ == "__main__":
             report += "\n---\n\n## AI 深度分析\n\n" + llm_result + "\n"
 
     # 输出
+    print("— LIN-Monitor 积分分析报告\n")
     print(report)
 
     # 钉钉推送

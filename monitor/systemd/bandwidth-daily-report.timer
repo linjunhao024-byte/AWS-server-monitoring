@@ -1,5 +1,5 @@
 [Unit]
-Description=Send daily traffic report at 23:00
+Description=LIN-Monitor Daily Traffic Report
 
 [Timer]
 OnCalendar=*-*-* 23:00:00

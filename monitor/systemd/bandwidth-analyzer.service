@@ -1,5 +1,5 @@
 [Unit]
-Description=Bandwidth Credit System Analyzer
+Description=LIN-Monitor Bandwidth Credit Analyzer
 After=network-online.target
 
 [Service]
