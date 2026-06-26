@@ -9,6 +9,7 @@ AWS Lightsail 服务器监控系统 v3.0
 import os
 import sys
 import time
+import threading
 import subprocess
 
 # 确保能找到同目录下的模块
@@ -17,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (
     INTERFACE, DATA_DIR, INSTALL_DIR,
     DINGTALK_WEBHOOK, DINGTALK_SECRET,
+    TG_BOT_TOKEN, TG_CHAT_ID,
     XFYUN_API_KEY, XFYUN_ENABLED,
     EMAIL_ENABLED, SMTP_SERVER, SMTP_PORT, SMTP_USE_SSL,
     SMTP_USERNAME, SMTP_PASSWORD, EMAIL_RECIPIENTS,
@@ -350,34 +352,53 @@ def action_manual_push():
     """[7] 手动推送"""
     clear_screen()
     step_frame("手动推送")
-    options = ["发送钉钉测试消息", "发送钉钉日报", "发送邮件周报"]
+    options = [
+        "发送钉钉测试消息",
+        "发送 Telegram 测试消息",
+        "发送钉钉+Telegram 日报",
+        "发送邮件周报",
+        "发送 Telegram 菜单键盘",
+    ]
     idx = ask_choice("选择操作", options)
     if idx == -1:
         return
 
-    from notifications import send_dingtalk, send_email
+    from notifications import send_dingtalk, send_telegram, send_tg_with_menu, send_email, _server_info_block
 
     if idx == 0:
         if not DINGTALK_WEBHOOK:
             print(f"\n  {c(YELLOW, '钉钉未配置')}")
             pause()
             return
-        from notifications import _server_info_block
         msg = f"### 钉钉连接测试\n\n{_server_info_block()}\n- **时间**: {now_iso()}\n\n> 测试成功\n\n---\n*菜单手动测试*"
         ok = send_dingtalk("钉钉连接测试", msg)
         print(f"\n  {c(GREEN, '✓') if ok else c(RED, '✗')} {'发送成功' if ok else '发送失败'}")
 
     elif idx == 1:
+        if not TG_BOT_TOKEN:
+            print(f"\n  {c(YELLOW, 'Telegram 未配置')}")
+            pause()
+            return
+        msg = f"🔔 *Telegram 连接测试*\n\n{_server_info_block()}\n\n_测试成功_"
+        ok = send_telegram(msg)
+        print(f"\n  {c(GREEN, '✓') if ok else c(RED, '✗')} {'发送成功' if ok else '发送失败'}")
+
+    elif idx == 2:
         from reporter import get_traffic_data, build_dingtalk_message
         traffic = get_traffic_data()
         if traffic:
             msg = build_dingtalk_message(traffic)
-            send_dingtalk("服务器流量日报", msg)
-            print(f"\n  {c(GREEN, '✓')} 日报已发送")
+            if DINGTALK_WEBHOOK:
+                send_dingtalk("服务器流量日报", msg)
+                print(f"\n  {c(GREEN, '✓')} 钉钉日报已发送")
+            if TG_BOT_TOKEN:
+                tg_msg = f"📊 *服务器流量日报*\n\n{_server_info_block()}\n\n入站: {format_bytes(traffic.today_rx)} | 出站: {format_bytes(traffic.today_tx)} | 总计: {format_bytes(traffic.today_total)}"
+                send_telegram(tg_msg)
+                print(f"  {c(GREEN, '✓')} Telegram 日报已发送")
         else:
             print(f"\n  {c(YELLOW, '无法获取流量数据')}")
 
-    elif idx == 2:
+    elif idx == 3:
         if not EMAIL_ENABLED:
             print(f"\n  {c(YELLOW, '邮件功能未启用')}")
             pause()
@@ -396,6 +417,15 @@ def action_manual_push():
             print(f"\n  {c(GREEN, '✓')} 周报已发送")
         else:
             print(f"\n  {c(YELLOW, '无法获取流量数据')}")
+
+    elif idx == 4:
+        if not TG_BOT_TOKEN:
+            print(f"\n  {c(YELLOW, 'Telegram 未配置')}")
+            pause()
+            return
+        ok = send_tg_with_menu(f"🖥️ *{SERVER_ALIAS}*\n\n选择操作:")
+        print(f"\n  {c(GREEN, '✓') if ok else c(RED, '✗')} {'菜单已发送' if ok else '发送失败'}")
+
     pause()
 
 
@@ -425,9 +455,9 @@ def action_view_config():
 def _config_display():
     """编辑配置的显示面板。"""
     wh_st = c(GREEN, _mask(DINGTALK_WEBHOOK)) if DINGTALK_WEBHOOK else c(DIM, "(未配置)")
+    tg_st = c(GREEN, _mask(TG_BOT_TOKEN)) if TG_BOT_TOKEN else c(DIM, "(未配置)")
     xf_st = c(GREEN, "已启用") if XFYUN_ENABLED else c(DIM, "已禁用")
     em_st = c(GREEN, "已启用") if EMAIL_ENABLED else c(DIM, "已禁用")
-    rt_st = c(GREEN, "已开启") if ROUTE_ALERT_ENABLED else c(DIM, "已关闭")
 
     print()
     print(f"  {_cyan('+')}{_hline('-')}{_cyan('+')}")
@@ -435,10 +465,12 @@ def _config_display():
     print(f"  {_cyan('+')}{_hline('-')}{_cyan('+')}")
     print(_full_row(""))
     print(_2col_row(f"  {c(YELLOW, '[1]')}  服务器名称  {c(GREEN, SERVER_ALIAS)}", f"  {c(YELLOW, '[5]')}  钉钉配置    {wh_st}"))
-    print(_2col_row(f"  {c(YELLOW, '[2]')}  网卡        {c(GREEN, INTERFACE)}", f"  {c(YELLOW, '[6]')}  邮件配置    {em_st}"))
-    print(_2col_row(f"  {c(YELLOW, '[3]')}  路由目标    {c(GREEN, ROUTE_TARGET)}", f"  {c(YELLOW, '[7]')}  讯飞配置    {xf_st}"))
-    print(_2col_row(f"  {c(YELLOW, '[4]')}  检测间隔    {ROUTE_INTERVAL}秒", f"  {c(YELLOW, '[8]')}  运维参数"))
+    print(_2col_row(f"  {c(YELLOW, '[2]')}  网卡        {c(GREEN, INTERFACE)}", f"  {c(YELLOW, '[6]')}  Telegram    {tg_st}"))
+    print(_2col_row(f"  {c(YELLOW, '[3]')}  路由目标    {c(GREEN, ROUTE_TARGET)}", f"  {c(YELLOW, '[7]')}  邮件配置    {em_st}"))
+    print(_2col_row(f"  {c(YELLOW, '[4]')}  检测间隔    {ROUTE_INTERVAL}秒", f"  {c(YELLOW, '[8]')}  讯飞配置    {xf_st}"))
     print(_full_row(""))
+    print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
+    print(_full_row(f"  {c(YELLOW, '[9]')}  运维参数"))
     print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
     print(_full_row(f"  {c(DIM, '[0]')}  {c(DIM, '返回')}"))
     print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
@@ -453,7 +485,7 @@ def action_edit_config():
         _config_display()
 
         try:
-            ch = input(f"\n  {c(YELLOW, '请选择')} [0-8]: ").strip()
+            ch = input(f"\n  {c(YELLOW, '请选择')} [0-9]: ").strip()
         except (EOFError, KeyboardInterrupt):
             return
 
@@ -550,6 +582,48 @@ def action_edit_config():
 
         elif ch == "6":
             clear_screen()
+            step_frame("Telegram 配置")
+            tg_st = c(GREEN, _mask(TG_BOT_TOKEN)) if TG_BOT_TOKEN else c(DIM, "(未配置)")
+            step_row(f"  Bot Token: {tg_st}")
+            step_row(f"  Chat ID:   {TG_CHAT_ID or c(DIM, '(未配置)')}")
+            step_sep()
+            step_row(f"  {c(YELLOW, '[1]')} 修改 Bot Token")
+            step_row(f"  {c(YELLOW, '[2]')} 修改 Chat ID")
+            step_row(f"  {c(YELLOW, '[3]')} 清除配置")
+            step_row(f"  {c(YELLOW, '[4]')} 发送测试消息")
+            step_end()
+            sub = input(f"  选择: ").strip()
+            if sub == "1":
+                token = input(f"  Bot Token: ").strip()
+                if token:
+                    cfg.TG_BOT_TOKEN = token
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+                    time.sleep(0.8)
+            elif sub == "2":
+                chat_id = input(f"  Chat ID: ").strip()
+                if chat_id:
+                    cfg.TG_CHAT_ID = chat_id
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+                    time.sleep(0.8)
+            elif sub == "3":
+                cfg.TG_BOT_TOKEN = ""
+                cfg.TG_CHAT_ID = ""
+                save_config()
+                print(f"  {c(GREEN, '✓')} 已清除")
+                time.sleep(0.8)
+            elif sub == "4":
+                from notifications import send_telegram, _server_info_block
+                ok = send_telegram(f"🔔 *Telegram 连接测试*\n\n{_server_info_block()}\n\n_测试成功_")
+                if ok:
+                    print(f"  {c(GREEN, '✓')} 测试消息已发送")
+                else:
+                    print(f"  {c(RED, '✗')} 发送失败，请检查 Token 和 Chat ID")
+                time.sleep(0.8)
+
+        elif ch == "7":
+            clear_screen()
             step_frame("邮件配置")
             em_st = c(GREEN, "已启用") if EMAIL_ENABLED else c(DIM, "已禁用")
             step_row(f"  状态:     {em_st}")
@@ -621,7 +695,7 @@ def action_edit_config():
                 except ValueError:
                     pass
 
-        elif ch == "7":
+        elif ch == "8":
             clear_screen()
             step_frame("讯飞配置")
             xf_st = c(GREEN, "已启用") if XFYUN_ENABLED else c(DIM, "已禁用")
@@ -654,7 +728,7 @@ def action_edit_config():
                 print(f"  {c(GREEN, '✓')} 已禁用")
                 time.sleep(0.8)
 
-        elif ch == "8":
+        elif ch == "9":
             clear_screen()
             step_frame("运维参数")
             step_row(f"  日志保留:  {LOG_RETENTION_DAYS} 天")
@@ -1112,6 +1186,144 @@ def action_ai_analysis():
     pause()
 
 
+# ---------------------------------------------------------------------------
+# Telegram 内联键盘回调处理
+# ---------------------------------------------------------------------------
+
+def _handle_tg_callback(callback_data: str, query_id: str) -> str:
+    """
+    处理 Telegram 回调，返回结果文本。
+    """
+    from notifications import answer_callback, _server_info_block
+    answer_callback(query_id, "处理中...")
+
+    if callback_data == "status":
+        results = health_check()
+        lines = ["📊 *监控状态*\n"]
+        for r in results:
+            icon = {"ok": "✓", "warn": "⚠", "error": "✗"}.get(r["status"], "?")
+            lines.append(f"`{icon}` {r['component']}: {r['message']}")
+        return "\n".join(lines)
+
+    elif callback_data == "traffic":
+        from reporter import get_traffic_data
+        traffic = get_traffic_data()
+        if not traffic:
+            return "⚠ 无法获取流量数据"
+        return (
+            f"📈 *今日流量*\n\n"
+            f"入站: `{format_bytes(traffic.today_rx)}`\n"
+            f"出站: `{format_bytes(traffic.today_tx)}`\n"
+            f"总计: `{format_bytes(traffic.today_total)}`\n\n"
+            f"*本周*\n"
+            f"入站: `{format_bytes(traffic.weekly_rx)}`\n"
+            f"出站: `{format_bytes(traffic.weekly_tx)}`\n"
+            f"总计: `{format_bytes(traffic.weekly_total)}`\n"
+            f"完整性: {traffic.days_counted}/7 天"
+        )
+
+    elif callback_data == "route":
+        if os.path.exists(DATA_DIR):
+            route_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith("route_log_")])
+            if route_files:
+                latest = os.path.join(DATA_DIR, route_files[-1])
+                try:
+                    with open(latest, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                        last_entries = [l.rstrip() for l in lines[-6:] if l.strip()]
+                        return "📡 *路由状态*\n\n" + "\n".join(last_entries)
+                except Exception:
+                    pass
+        return "⚠ 未找到路由日志"
+
+    elif callback_data == "analyze":
+        from analyzer import find_latest_file, load_csv_files, reverse_engineer_credits
+        latest = find_latest_file()
+        if not latest:
+            return "⚠ 未找到数据文件"
+        rows = load_csv_files([latest])
+        if not rows:
+            return "⚠ 没有有效数据"
+        analysis = reverse_engineer_credits(rows)
+        ci = analysis["credit_inference"]
+        return (
+            f"🔍 *积分分析*\n\n"
+            f"可持续基线: `{analysis['sustainable_rx']}` / `{analysis['sustainable_tx']}` Mbps\n"
+            f"可突上限: `{analysis['burst_ceiling_rx']}` / `{analysis['burst_ceiling_tx']}` Mbps\n"
+            f"钳位地板: `{analysis['throttle_floor']}` Mbps\n\n"
+            f"突发: {ci['total_burst_count']} 次\n"
+            f"钳位: {ci['total_throttle_count']} 次\n"
+            f"模式: {ci['burst_to_throttle_pattern']}"
+        )
+
+    elif callback_data == "config":
+        wh_st = "✓" if DINGTALK_WEBHOOK else "✗"
+        tg_st = "✓" if TG_BOT_TOKEN else "✗"
+        em_st = "✓" if EMAIL_ENABLED else "✗"
+        xf_st = "✓" if XFYUN_ENABLED else "✗"
+        return (
+            f"⚙️ *配置状态*\n\n"
+            f"钉钉: {wh_st}  Telegram: {tg_st}\n"
+            f"邮件: {em_st}  讯飞AI: {xf_st}\n\n"
+            f"服务器: `{SERVER_ALIAS}`\n"
+            f"网卡: `{INTERFACE}`\n"
+            f"路由: `{ROUTE_TARGET}` ({ROUTE_INTERVAL}s)"
+        )
+
+    elif callback_data == "refresh":
+        return f"🔄 *已刷新*\n\n{_server_info_block()}"
+
+    return "❓ 未知操作"
+
+
+def _tg_poll_thread():
+    """后台线程：轮询 Telegram 回调。"""
+    from notifications import poll_telegram_updates, send_telegram_keyboard
+
+    offset = 0
+    while is_running():
+        if not TG_BOT_TOKEN:
+            time.sleep(60)
+            continue
+
+        updates = poll_telegram_updates(offset, timeout=30)
+        for update in updates:
+            offset = update["update_id"] + 1
+
+            callback = update.get("callback_query")
+            if callback:
+                data = callback.get("data", "")
+                query_id = callback.get("id", "")
+                result = _handle_tg_callback(data, query_id)
+
+                # 发送结果（带菜单键盘）
+                buttons = [
+                    [
+                        {"text": "📊 状态", "callback_data": "status"},
+                        {"text": "🔍 分析", "callback_data": "analyze"},
+                    ],
+                    [
+                        {"text": "📈 流量", "callback_data": "traffic"},
+                        {"text": "📡 路由", "callback_data": "route"},
+                    ],
+                    [
+                        {"text": "⚙️ 配置", "callback_data": "config"},
+                        {"text": "🔄 刷新", "callback_data": "refresh"},
+                    ],
+                ]
+                send_telegram_keyboard(result, buttons)
+
+        time.sleep(1)
+
+
+def start_tg_poller():
+    """启动 Telegram 回调轮询线程。"""
+    if not TG_BOT_TOKEN:
+        return
+    t = threading.Thread(target=_tg_poll_thread, daemon=True)
+    t.start()
+
+
 def action_ip_check():
     """[18] IP探测"""
     clear_screen()
@@ -1359,6 +1571,9 @@ def main():
     # 首次运行引导
     if _is_first_run():
         _first_run_wizard()
+
+    # 启动 Telegram 内联键盘轮询
+    start_tg_poller()
 
     # 交互式菜单
     while True:

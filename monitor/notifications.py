@@ -24,6 +24,7 @@ from email.mime.image import MIMEImage
 
 from config import (
     DINGTALK_WEBHOOK, DINGTALK_SECRET,
+    TG_BOT_TOKEN, TG_CHAT_ID, TG_API_URL,
     XFYUN_API_URL, XFYUN_API_KEY, XFYUN_MODEL, XFYUN_ENABLED,
     EMAIL_ENABLED, SMTP_SERVER, SMTP_PORT, SMTP_USE_SSL,
     SMTP_USERNAME, SMTP_PASSWORD, SENDER_NAME, EMAIL_RECIPIENTS,
@@ -87,6 +88,162 @@ def send_dingtalk(title: str, markdown_text: str,
     except Exception as exc:
         print(f"[ERR] 钉钉发送失败: {exc}", file=sys.stderr)
         return False
+
+
+# ---------------------------------------------------------------------------
+# Telegram 推送
+# ---------------------------------------------------------------------------
+
+def send_telegram(text: str, parse_mode: str = "Markdown") -> bool:
+    """
+    发送 Telegram 消息。
+
+    Args:
+        text: 消息内容
+        parse_mode: Markdown 或 HTML
+
+    Returns:
+        是否发送成功
+    """
+    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        return False
+
+    try:
+        import urllib.request
+        url = f"{TG_API_URL}/bot{TG_BOT_TOKEN}/sendMessage"
+        payload = json.dumps({
+            "chat_id": TG_CHAT_ID,
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": True,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            return result.get("ok", False)
+    except Exception as exc:
+        print(f"[WARN] Telegram 发送失败: {exc}", file=sys.stderr)
+        return False
+
+
+def send_telegram_keyboard(text: str, buttons: list[dict],
+                           parse_mode: str = "Markdown") -> bool:
+    """
+    发送带内联键盘的 Telegram 消息。
+
+    Args:
+        text: 消息内容
+        buttons: 按钮列表，每项 {"text": "...", "callback_data": "..."}
+                 支持多行：嵌套列表 [[btn1, btn2], [btn3]]
+        parse_mode: Markdown 或 HTML
+
+    Returns:
+        是否发送成功
+    """
+    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        return False
+
+    # 构建键盘
+    if buttons and isinstance(buttons[0], list):
+        keyboard = buttons  # 已经是多行格式
+    else:
+        keyboard = [buttons]  # 单行，包成二维
+
+    try:
+        import urllib.request
+        url = f"{TG_API_URL}/bot{TG_BOT_TOKEN}/sendMessage"
+        payload = json.dumps({
+            "chat_id": TG_CHAT_ID,
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": True,
+            "reply_markup": {
+                "inline_keyboard": keyboard,
+            },
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            return result.get("ok", False)
+    except Exception as exc:
+        print(f"[WARN] Telegram 键盘发送失败: {exc}", file=sys.stderr)
+        return False
+
+
+def answer_callback(callback_query_id: str, text: str = "") -> bool:
+    """回答 Telegram 回调查询（消除加载状态）。"""
+    if not TG_BOT_TOKEN:
+        return False
+    try:
+        import urllib.request
+        url = f"{TG_API_URL}/bot{TG_BOT_TOKEN}/answerCallbackQuery"
+        payload = json.dumps({
+            "callback_query_id": callback_query_id,
+            "text": text,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("ok", False)
+    except Exception:
+        return False
+
+
+def poll_telegram_updates(offset: int = 0, timeout: int = 30) -> list[dict]:
+    """
+    长轮询 Telegram 更新（用于接收内联键盘回调）。
+
+    Args:
+        offset: 上次处理的 update_id + 1
+        timeout: 长轮询超时秒数
+
+    Returns:
+        update 列表
+    """
+    if not TG_BOT_TOKEN:
+        return []
+    try:
+        import urllib.request
+        url = f"{TG_API_URL}/bot{TG_BOT_TOKEN}/getUpdates?offset={offset}&timeout={timeout}"
+        req = urllib.request.Request(url, headers={"User-Agent": "AWS-Monitor"})
+        with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            if result.get("ok"):
+                return result.get("result", [])
+    except Exception:
+        pass
+    return []
+
+
+def send_tg_with_menu(text: str) -> bool:
+    """发送带主菜单键盘的 Telegram 消息。"""
+    buttons = [
+        [
+            {"text": "📊 状态", "callback_data": "status"},
+            {"text": "🔍 分析", "callback_data": "analyze"},
+        ],
+        [
+            {"text": "📈 流量", "callback_data": "traffic"},
+            {"text": "📡 路由", "callback_data": "route"},
+        ],
+        [
+            {"text": "⚙️ 配置", "callback_data": "config"},
+            {"text": "🔄 刷新", "callback_data": "refresh"},
+        ],
+    ]
+    return send_telegram_keyboard(text, buttons)
 
 
 # ---------------------------------------------------------------------------

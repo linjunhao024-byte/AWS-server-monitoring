@@ -349,6 +349,8 @@ write_config() {
     _smtp_user=$(json_escape "$CFG_SMTP_USERNAME")
     _smtp_pass=$(json_escape "$CFG_SMTP_PASSWORD")
     _route_target=$(json_escape "$CFG_ROUTE_TARGET")
+    _tg_token=$(json_escape "${CFG_TG_BOT_TOKEN:-}")
+    _tg_chatid=$(json_escape "${CFG_TG_CHAT_ID:-}")
 
     cat > "${CFG_INSTALL_DIR}/settings.json" << JSONEOF
 {
@@ -357,6 +359,8 @@ write_config() {
   "DATA_DIR": "${CFG_DATA_DIR}",
   "DINGTALK_WEBHOOK": "${_wh}",
   "DINGTALK_SECRET": "${_secret}",
+  "TG_BOT_TOKEN": "${_tg_token}",
+  "TG_CHAT_ID": "${_tg_chatid}",
   "XFYUN_API_KEY": "${_xfyun}",
   "XFYUN_ENABLED": ${CFG_XFYUN_ENABLED},
   "EMAIL_ENABLED": ${CFG_EMAIL_ENABLED},
@@ -498,7 +502,7 @@ interactive_config() {
 
     # 2. 钉钉
     echo ""
-    step_title "2/5  钉钉机器人 ${DIM}(可选)${NC}"
+    step_title "2/6  钉钉机器人 ${DIM}(可选)${NC}"
     step_sep
     step_row "${DIM}用于推送积分分析报告、流量日报、路由变化告警${NC}"
     step_sep
@@ -508,9 +512,21 @@ interactive_config() {
     fi
     step_bottom
 
+    # 3. Telegram
+    echo ""
+    step_title "3/6  Telegram 机器人 ${DIM}(可选)${NC}"
+    step_sep
+    step_row "${DIM}海外服务器推荐使用 Telegram 推送，支持内联键盘操作${NC}"
+    step_sep
+    CFG_TG_BOT_TOKEN=$(ask_input "Bot Token (从 @BotFather 获取)" "")
+    if [ -n "$CFG_TG_BOT_TOKEN" ]; then
+        CFG_TG_CHAT_ID=$(ask_input "Chat ID (从 @userinfobot 获取)" "")
+    fi
+    step_bottom
+
     # 3. 讯飞星火 LLM
     echo ""
-    step_title "3/5  讯飞星火大模型 ${DIM}(可选)${NC}"
+    step_title "4/6  讯飞星火大模型 ${DIM}(可选)${NC}"
     step_sep
     step_row "${DIM}用于积分分析的 AI 深度解读${NC}"
     step_sep
@@ -522,7 +538,7 @@ interactive_config() {
 
     # 4. 邮件
     echo ""
-    step_title "4/5  邮件周报 ${DIM}(可选)${NC}"
+    step_title "5/6  邮件周报 ${DIM}(可选)${NC}"
     step_sep
     step_row "${DIM}每周日发送 HTML 格式的流量周报${NC}"
     step_sep
@@ -536,7 +552,7 @@ interactive_config() {
 
     # 5. 路由监测
     echo ""
-    step_title "5/6  路由监测"
+    step_title "6/7  路由监测"
     step_sep
     CFG_ROUTE_TARGET=$(ask_input "监测目标" "${CFG_ROUTE_TARGET}")
     while true; do
@@ -550,7 +566,7 @@ interactive_config() {
 
     # 6. 快捷键
     echo ""
-    step_title "6/6  快捷命令"
+    step_title "7/7  快捷命令"
     step_sep
     step_row "${DIM}默认命令: monitor${NC}"
     step_row "${DIM}可自定义更短的快捷键（如 m、mo、mt）${NC}"
@@ -742,6 +758,12 @@ main() {
         step_row "  钉钉:        ${GREEN}已配置${NC}"
     else
         step_row "  钉钉:        ${DIM}未配置${NC}"
+    fi
+
+    if [ -n "${CFG_TG_BOT_TOKEN:-}" ]; then
+        step_row "  Telegram:    ${GREEN}已配置${NC}"
+    else
+        step_row "  Telegram:    ${DIM}未配置${NC}"
     fi
 
     if [ "$CFG_XFYUN_ENABLED" = "true" ]; then

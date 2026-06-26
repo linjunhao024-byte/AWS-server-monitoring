@@ -23,6 +23,13 @@ DINGTALK_WEBHOOK = ""
 DINGTALK_SECRET = ""
 
 # ---------------------------------------------------------------------------
+# Telegram 配置（默认为空，通过安装向导或菜单配置）
+# ---------------------------------------------------------------------------
+TG_BOT_TOKEN = ""
+TG_CHAT_ID = ""
+TG_API_URL = "https://api.telegram.org"
+
+# ---------------------------------------------------------------------------
 # 讯飞星火大模型配置（默认为空，通过安装向导或菜单配置）
 # ---------------------------------------------------------------------------
 XFYUN_API_URL = "https://spark-api-open.xf-yun.com/v1/chat/completions"
@@ -105,6 +112,7 @@ ROUTE_ALERT_ENABLED = True  # 路由变化告警
 # 需要持久化的字段列表
 _PERSISTENT_KEYS = [
     "DINGTALK_WEBHOOK", "DINGTALK_SECRET",
+    "TG_BOT_TOKEN", "TG_CHAT_ID",
     "XFYUN_API_KEY", "XFYUN_MODEL", "XFYUN_ENABLED",
     "EMAIL_ENABLED", "SMTP_SERVER", "SMTP_PORT", "SMTP_USE_SSL",
     "SMTP_USERNAME", "SMTP_PASSWORD", "EMAIL_RECIPIENTS",
