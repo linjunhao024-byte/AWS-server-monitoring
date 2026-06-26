@@ -20,7 +20,7 @@ from config import (
     DINGTALK_WEBHOOK, DINGTALK_SECRET,
     TG_BOT_TOKEN, TG_CHAT_ID,
     XFYUN_API_KEY, XFYUN_ENABLED,
-    WEEKLY_REPORT_DAY, SENDER_NAME,
+    WEEKLY_REPORT_DAY, SENDER_NAME, DAILY_REPORT_TIME,
     EMAIL_ENABLED, SMTP_SERVER, SMTP_PORT, SMTP_USE_SSL,
     SMTP_USERNAME, SMTP_PASSWORD, EMAIL_RECIPIENTS,
     SERVER_ALIAS, ROUTE_TARGET, ROUTE_INTERVAL,
@@ -177,6 +177,40 @@ def _systemctl_status(service: str) -> str:
         return result.stdout.strip() or "inactive"
     except Exception:
         return "未知"
+
+
+def _update_daily_report_timer(time_str: str) -> bool:
+    """更新每日报告的 systemd timer 时间。"""
+    try:
+        hh, mm = time_str.split(":")
+        hh = int(hh)
+        mm = int(mm)
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            return False
+    except (ValueError, AttributeError):
+        return False
+
+    timer_content = f"""[Unit]
+Description=Send daily traffic report at {time_str}
+
+[Timer]
+OnCalendar=*-*-* {hh}:{mm:02d}:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+    timer_path = "/etc/systemd/system/bandwidth-daily-report.timer"
+    try:
+        with open(timer_path, "w") as f:
+            f.write(timer_content)
+        subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
+        subprocess.run(["systemctl", "re-enable", "bandwidth-daily-report.timer"],
+                       capture_output=True, timeout=10)
+        return True
+    except Exception:
+        return False
 
 
 def _mask(s: str) -> str:
@@ -464,6 +498,7 @@ def action_view_config():
     step_sep()
     step_row(c(BOLD, "  报表设置"))
     step_sep()
+    step_row(f"  每日推送     {c(GREEN, DAILY_REPORT_TIME)}")
     week_days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     step_row(f"  周报发送日   每{week_days[WEEKLY_REPORT_DAY]}")
     step_row(f"  发件人       {SENDER_NAME}")
@@ -1094,10 +1129,11 @@ def action_alert_settings():
     step_row(c(BOLD, "  报表设置"))
     step_sep()
     week_days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    step_row(f"  每日推送:    {c(GREEN, DAILY_REPORT_TIME)}")
     step_row(f"  周报发送日:  每{week_days[WEEKLY_REPORT_DAY]}")
     step_row(f"  发件人名称:  {SENDER_NAME}")
 
-    options = ["切换路由变化告警"]
+    options = ["切换路由变化告警", "修改每日推送时间"]
     idx = ask_choice("选择操作", options)
     if idx == 0:
         import config as cfg
@@ -1105,6 +1141,15 @@ def action_alert_settings():
         save_config()
         st = "已开启" if cfg.ROUTE_ALERT_ENABLED else "已关闭"
         print(f"\n  {c(GREEN, '✓')} 路由变化告警 {st}")
+    elif idx == 1:
+        new_time = input(f"\n  推送时间 (HH:MM) [{DAILY_REPORT_TIME}]: ").strip()
+        if new_time:
+            if _update_daily_report_timer(new_time):
+                cfg.DAILY_REPORT_TIME = new_time
+                save_config()
+                print(f"  {c(GREEN, '✓')} 每日推送时间已设为 {new_time}")
+            else:
+                print(f"  {c(RED, '无效时间格式，请使用 HH:MM')}")
     pause()
 
 

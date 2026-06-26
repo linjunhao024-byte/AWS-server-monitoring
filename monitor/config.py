@@ -103,6 +103,7 @@ CURRENT_VERSION = "3.3.0"   # 当前版本号
 # 告警开关
 # ---------------------------------------------------------------------------
 ROUTE_ALERT_ENABLED = True  # 路由变化告警
+DAILY_REPORT_TIME = "23:00"  # 每日报告推送时间（HH:MM）
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +120,7 @@ _PERSISTENT_KEYS = [
     "SERVER_ALIAS", "INTERFACE", "DATA_DIR",
     "ROUTE_TARGET", "ROUTE_INTERVAL",
     "ROUTE_ALERT_ENABLED", "LOG_RETENTION_DAYS", "DISK_ALERT_MB",
-    "SENDER_NAME", "WEEKLY_REPORT_DAY",
+    "SENDER_NAME", "WEEKLY_REPORT_DAY", "DAILY_REPORT_TIME",
 ]
 
 

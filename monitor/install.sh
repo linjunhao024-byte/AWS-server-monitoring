@@ -368,7 +368,8 @@ write_config() {
   "SMTP_PASSWORD": "${_smtp_pass}",
   "EMAIL_RECIPIENTS": ${recipients_json},
   "ROUTE_TARGET": "${_route_target}",
-  "ROUTE_INTERVAL": ${CFG_ROUTE_INTERVAL}
+  "ROUTE_INTERVAL": ${CFG_ROUTE_INTERVAL},
+  "DAILY_REPORT_TIME": "23:00"
 }
 JSONEOF
 
