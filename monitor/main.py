@@ -18,6 +18,8 @@ import subprocess
 # 确保能找到同目录下的模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from logo import LOGO_TEXT, LOGO_VERSION_LINE, SIGNATURE, ABOUT_INFO
+
 from config import (
     INTERFACE, DATA_DIR, INSTALL_DIR,
     DINGTALK_WEBHOOK, DINGTALK_SECRET,
@@ -1654,6 +1656,36 @@ def _is_first_run() -> bool:
     return False
 
 
+def action_about():
+    """[A] 关于"""
+    clear_screen()
+    step_frame(f"{ABOUT_INFO['name']}")
+    step_row()
+    step_row(f"  {c(BOLD, ABOUT_INFO['full_name'])}  v{CURRENT_VERSION}")
+    step_row(f"  {c(DIM, ABOUT_INFO['description'])}")
+    step_row()
+    step_sep()
+    step_row(c(BOLD, "  作者"))
+    step_sep()
+    step_row(f"  {c(GREEN, ABOUT_INFO['author'])}")
+    step_row(f"  {c(DIM, ABOUT_INFO['github'])}")
+    step_sep()
+    step_row(c(BOLD, "  核心特性"))
+    step_sep()
+    for feat in ABOUT_INFO["features"]:
+        step_row(f"  {c(GREEN, '•')} {feat}")
+    step_sep()
+    step_row(c(BOLD, "  技术栈"))
+    step_sep()
+    step_row(f"  语言: Python 3.10+ (零依赖核心)")
+    step_row(f"  平台: AWS Lightsail / Debian")
+    step_row(f"  服务: systemd (daemon + timer)")
+    step_row(f"  通知: 钉钉 · Telegram · 邮件")
+    step_row(f"  AI:   讯飞星火 4.0 Ultra")
+    step_end()
+    pause()
+
+
 def _first_run_wizard():
     clear_screen()
     step_frame("首次运行引导")
@@ -1762,7 +1794,7 @@ def main():
 
         # 主菜单
         print(f"\n  {_cyan('+')}{_hline('=')}{_cyan('+')}")
-        print(_full_row(f"  {BOLD}AWS Lightsail 监控系统 v{CURRENT_VERSION}{NC}"))
+        print(_full_row(f"  {BOLD}{LOGO_TEXT}{NC}  v{CURRENT_VERSION}  {c(DIM, LOGO_VERSION_LINE)}"))
         print(_full_row(f"  服务器: {c(GREEN, SERVER_ALIAS)}  |  IP: {c(GREEN, get_server_ip())}"))
 
         # 状态概览
@@ -1808,11 +1840,11 @@ def main():
         print(_full_row(f"  {c(YELLOW, '[18]')}  IP探测"))
 
         print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
-        print(_full_row(f"  {c(DIM, '[0]')}  {c(DIM, '退出')}"))
+        print(_2col_row(f"  {c(DIM, '[0]')}  {c(DIM, '退出')}", f"  {c(DIM, '[A]')}  {c(DIM, '关于')}"))
         print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
 
         try:
-            choice = input(f"\n  {c(YELLOW, '请选择')} [0-18 | q退出 r刷新]: ").strip().lower()
+            choice = input(f"\n  {c(YELLOW, '请选择')} [0-18 | A关于 | q退出 | r刷新]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             break
 
@@ -1842,6 +1874,7 @@ def main():
             "16": action_alert_settings,
             "17": action_ai_analysis,
             "18": action_ip_check,
+            "a": action_about,
         }
 
         if choice == "0":
@@ -1849,7 +1882,7 @@ def main():
         elif choice in actions:
             actions[choice]()
         else:
-            print(f"  {c(RED, '无效输入')}")
+            print(f"  {c(RED, '无效输入')}"))
             pause()
 
 

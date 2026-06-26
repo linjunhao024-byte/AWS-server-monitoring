@@ -488,11 +488,17 @@ def _server_info_block() -> str:
 # 预定义通知模板
 # ---------------------------------------------------------------------------
 
+def _sign() -> str:
+    """通知签名。"""
+    from logo import SIGNATURE
+    return f"\n\n{SIGNATURE}"
+
+
 def notify_service_start(service_name: str, detail: str = ""):
     """服务启动通知（精简版）。"""
     from utils import now_iso
     from config import SERVER_ALIAS
-    msg = f"✅ *{service_name}* 已启动 `{SERVER_ALIAS}` {now_iso()}"
+    msg = f"✅ *{service_name}* 已启动 `{SERVER_ALIAS}` {now_iso()}{_sign()}"
     if detail:
         msg += f"\n{detail}"
     send_dingtalk(f"✅ {service_name}", msg)
@@ -502,7 +508,7 @@ def notify_service_stop(service_name: str, reason: str = "正常停止"):
     """服务停止通知（精简版）。"""
     from utils import now_iso
     from config import SERVER_ALIAS
-    msg = f"⚠️ *{service_name}* 已停止 `{SERVER_ALIAS}` {now_iso()}\n原因: {reason}"
+    msg = f"⚠️ *{service_name}* 已停止 `{SERVER_ALIAS}` {now_iso()}\n原因: {reason}{_sign()}"
     )
     msg += "\n\n---\n*自动通知*"
     send_dingtalk(f"⚠️ {service_name} 已停止", msg)

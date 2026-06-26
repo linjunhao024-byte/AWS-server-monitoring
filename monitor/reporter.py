@@ -610,5 +610,6 @@ def build_daily_detail_message() -> str:
     if alerts:
         msg += f"⚠️ {' | '.join(alerts)}\n"
 
-    msg += f"\n{now_iso()}"
+    from logo import SIGNATURE
+    msg += f"\n{now_iso()}\n{SIGNATURE}"
     return msg
