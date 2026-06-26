@@ -16,7 +16,7 @@ import time
 import argparse
 
 from config import (
-    ROUTE_TARGET, ROUTE_INTERVAL, DATA_DIR,
+    ROUTE_TARGET, ROUTE_INTERVAL, DATA_DIR, ROUTE_ALERT_ENABLED,
 )
 from utils import now_iso, today_label, setup_signal_handler, is_running
 from data_sources import run_traceroute, compare_routes
@@ -91,8 +91,11 @@ def run_monitor(target: str, interval: int, output_dir: str):
                 change_count += 1
                 print(f"[{now_iso()}] ⚠️  路由变化! 变化位置: {diff['change_hop']}")
                 log_route(output_dir, target, hops, diff)
-                alert = build_route_alert(target, diff, hops)
-                send_dingtalk("⚠️ 路由变化告警", alert)
+                if ROUTE_ALERT_ENABLED:
+                    alert = build_route_alert(target, diff, hops)
+                    send_dingtalk("⚠️ 路由变化告警", alert)
+                else:
+                    print(f"[{now_iso()}] 路由告警已关闭，未推送钉钉")
             else:
                 log_route(output_dir, target, hops, None)
                 print(f"[{now_iso()}] ✅ 路径无变化 (累计变化 {change_count} 次)")

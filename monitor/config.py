@@ -92,6 +92,11 @@ LOG_RETENTION_DAYS = 30     # CSV 日志保留天数
 DISK_ALERT_MB = 1024        # 数据目录磁盘告警阈值（MB）
 CURRENT_VERSION = "3.0.0"   # 当前版本号
 
+# ---------------------------------------------------------------------------
+# 告警开关
+# ---------------------------------------------------------------------------
+ROUTE_ALERT_ENABLED = True  # 路由变化告警
+
 
 # ---------------------------------------------------------------------------
 # 配置持久化
@@ -104,6 +109,7 @@ _PERSISTENT_KEYS = [
     "EMAIL_ENABLED", "SMTP_USERNAME", "SMTP_PASSWORD", "EMAIL_RECIPIENTS",
     "SERVER_ALIAS", "INTERFACE", "DATA_DIR",
     "ROUTE_TARGET", "ROUTE_INTERVAL",
+    "ROUTE_ALERT_ENABLED", "LOG_RETENTION_DAYS", "DISK_ALERT_MB",
 ]
 
 

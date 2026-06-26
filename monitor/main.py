@@ -415,69 +415,109 @@ def action_edit_config():
     step_frame("编辑配置")
     import config as cfg
 
-    options = [
-        "修改服务器别名",
-        "配置钉钉 Webhook",
-        "配置讯飞星火 LLM",
-        "配置邮件",
-        "修改路由监测参数",
-        "修改日志保留天数",
-        "修改磁盘告警阈值",
-    ]
-    idx = ask_choice("选择操作", options)
-    if idx == -1:
+    # 显示当前配置概览
+    step_row(c(BOLD, "  当前配置"))
+    step_sep()
+    step_row(f"  1. 服务器别名     {c(GREEN, SERVER_ALIAS)}")
+    step_row(f"  2. 网卡           {c(GREEN, INTERFACE)}")
+    step_row(f"  3. 钉钉 Webhook   {c(GREEN, _mask(DINGTALK_WEBHOOK)) if DINGTALK_WEBHOOK else c(DIM, '(未配置)')}")
+    step_row(f"  4. 钉钉 Secret    {c(GREEN, _mask(DINGTALK_SECRET)) if DINGTALK_SECRET else c(DIM, '(未配置)')}")
+    step_row(f"  5. 讯飞 API Key   {c(GREEN, _mask(XFYUN_API_KEY)) if XFYUN_API_KEY else c(DIM, '(未配置)')}")
+    step_row(f"  6. 邮件开关       {'已启用' if EMAIL_ENABLED else c(DIM, '已禁用')}")
+    step_row(f"  7. SMTP 服务器    {SMTP_SERVER}:{SMTP_PORT} {'(SSL)' if SMTP_USE_SSL else ''}")
+    step_row(f"  8. SMTP 用户      {SMTP_USERNAME or c(DIM, '(未配置)')}")
+    step_row(f"  9. SMTP 密码      {'******' if SMTP_PASSWORD else c(DIM, '(未配置)')}")
+    step_row(f"  10. 收件人        {', '.join(EMAIL_RECIPIENTS) if EMAIL_RECIPIENTS else c(DIM, '(未配置)')}")
+    step_row(f"  11. 路由目标      {c(GREEN, ROUTE_TARGET)}")
+    step_row(f"  12. 路由间隔      {ROUTE_INTERVAL} 秒")
+    step_row(f"  13. 日志保留      {LOG_RETENTION_DAYS} 天")
+    step_row(f"  14. 磁盘告警      {DISK_ALERT_MB} MB")
+    step_row(f"  15. 路由告警      {'已开启' if ROUTE_ALERT_ENABLED else c(DIM, '已关闭')}")
+
+    step_sep()
+    step_row(f"  {c(DIM, '输入编号修改对应项，0 返回')}")
+    step_end()
+
+    try:
+        ch = input(f"  {c(YELLOW, '选择编号')} [0-15]: ").strip()
+    except (EOFError, KeyboardInterrupt):
         return
 
-    if idx == 0:
-        alias = input(f"\n  服务器别名 [{c(GREEN, SERVER_ALIAS)}]: ").strip()
-        if alias:
-            cfg.SERVER_ALIAS = alias
-    elif idx == 1:
-        webhook = input(f"\n  Webhook URL: ").strip()
-        secret = input(f"  Secret (SEC开头): ").strip()
-        if webhook:
-            cfg.DINGTALK_WEBHOOK = webhook
-        if secret:
-            cfg.DINGTALK_SECRET = secret
-    elif idx == 2:
-        api_key = input(f"\n  讯飞 API Key: ").strip()
-        if api_key:
-            cfg.XFYUN_API_KEY = api_key
+    if ch == "0" or not ch:
+        return
+
+    if ch == "1":
+        alias = input(f"  服务器别名 [{c(GREEN, SERVER_ALIAS)}]: ").strip()
+        if alias: cfg.SERVER_ALIAS = alias
+    elif ch == "2":
+        iface = input(f"  网卡名称 [{c(GREEN, INTERFACE)}]: ").strip()
+        if iface: cfg.INTERFACE = iface
+    elif ch == "3":
+        wh = input(f"  Webhook URL: ").strip()
+        if wh: cfg.DINGTALK_WEBHOOK = wh
+    elif ch == "4":
+        sec = input(f"  Secret (SEC开头): ").strip()
+        if sec: cfg.DINGTALK_SECRET = sec
+    elif ch == "5":
+        key = input(f"  讯飞 API Key: ").strip()
+        if key:
+            cfg.XFYUN_API_KEY = key
             cfg.XFYUN_ENABLED = True
         else:
             cfg.XFYUN_API_KEY = ""
             cfg.XFYUN_ENABLED = False
-    elif idx == 3:
-        if input(f"\n  启用邮件？(y/n): ").strip().lower() == 'y':
+    elif ch == "6":
+        if input(f"  启用邮件？(y/n): ").strip().lower() == 'y':
             cfg.EMAIL_ENABLED = True
-            u = input(f"  SMTP 用户名 [{SMTP_USERNAME or ''}]: ").strip()
-            if u: cfg.SMTP_USERNAME = u
-            p = input(f"  SMTP 密码: ").strip()
-            if p: cfg.SMTP_PASSWORD = p
-            r = input(f"  收件人（逗号分隔）: ").strip()
-            if r: cfg.EMAIL_RECIPIENTS = [x.strip() for x in r.split(",")]
         else:
             cfg.EMAIL_ENABLED = False
-    elif idx == 4:
-        t = input(f"\n  路由目标 [{ROUTE_TARGET}]: ").strip()
+    elif ch == "7":
+        srv = input(f"  SMTP 服务器 [{SMTP_SERVER}]: ").strip()
+        if srv: cfg.SMTP_SERVER = srv
+        prt = input(f"  SMTP 端口 [{SMTP_PORT}]: ").strip()
+        if prt:
+            try: cfg.SMTP_PORT = int(prt)
+            except ValueError: pass
+        ssl = input(f"  使用 SSL？(Y/n): ").strip().lower()
+        cfg.SMTP_USE_SSL = ssl != 'n'
+    elif ch == "8":
+        u = input(f"  SMTP 用户名 [{SMTP_USERNAME or ''}]: ").strip()
+        if u: cfg.SMTP_USERNAME = u
+    elif ch == "9":
+        p = input(f"  SMTP 密码: ").strip()
+        if p: cfg.SMTP_PASSWORD = p
+    elif ch == "10":
+        r = input(f"  收件人（逗号分隔）: ").strip()
+        if r: cfg.EMAIL_RECIPIENTS = [x.strip() for x in r.split(",") if x.strip()]
+    elif ch == "11":
+        t = input(f"  路由目标 [{ROUTE_TARGET}]: ").strip()
         if t: cfg.ROUTE_TARGET = t
+    elif ch == "12":
         i = input(f"  检测间隔(秒) [{ROUTE_INTERVAL}]: ").strip()
         if i:
             try: cfg.ROUTE_INTERVAL = int(i)
             except ValueError: print(f"  {c(YELLOW, '无效数字')}")
-    elif idx == 5:
-        d = input(f"\n  日志保留天数 [{LOG_RETENTION_DAYS}]: ").strip()
+    elif ch == "13":
+        d = input(f"  日志保留天数 [{LOG_RETENTION_DAYS}]: ").strip()
         if d:
             try: cfg.LOG_RETENTION_DAYS = int(d)
             except ValueError: print(f"  {c(YELLOW, '无效数字')}")
-    elif idx == 6:
-        m = input(f"\n  磁盘告警阈值(MB) [{DISK_ALERT_MB}]: ").strip()
+    elif ch == "14":
+        m = input(f"  磁盘告警阈值(MB) [{DISK_ALERT_MB}]: ").strip()
         if m:
             try: cfg.DISK_ALERT_MB = int(m)
             except ValueError: print(f"  {c(YELLOW, '无效数字')}")
+    elif ch == "15":
+        cfg.ROUTE_ALERT_ENABLED = not ROUTE_ALERT_ENABLED
+        st = "已开启" if cfg.ROUTE_ALERT_ENABLED else "已关闭"
+        print(f"  {c(GREEN, '✓')} 路由告警 {st}")
+    else:
+        print(f"  {c(RED, '无效编号')}")
+        pause()
+        return
 
     save_config()
-    print(f"\n  {c(GREEN, '✓')} 配置已保存")
+    print(f"  {c(GREEN, '✓')} 配置已保存")
     pause()
 
 
@@ -620,8 +660,51 @@ def action_auto_panel():
     """[14] 自动面板开关"""
     clear_screen()
     step_frame("自动面板")
-    step_row(f"  当前状态: {'运行中' if True else '已停止'}")
-    step_end()
+    step_row(f"  SSH 登录后自动进入监控面板")
+    step_sep()
+
+    # 检查当前状态
+    bashrc = os.path.expanduser("~/.bashrc")
+    marker = "# AWS-Monitor-AutoPanel"
+    is_enabled = False
+    if os.path.exists(bashrc):
+        with open(bashrc, "r") as f:
+            is_enabled = marker in f.read()
+
+    st = c(GREEN, "已开启") if is_enabled else c(DIM, "已关闭")
+    step_row(f"  当前状态: {st}")
+    step_sep()
+    options = ["开启自动面板", "关闭自动面板"]
+    idx = ask_choice("选择操作", options)
+    if idx == -1:
+        return
+
+    if idx == 0:
+        # 开启
+        if is_enabled:
+            print(f"\n  {c(YELLOW, '已经是开启状态')}")
+        else:
+            with open(bashrc, "a") as f:
+                f.write(f"\n{marker}\nmonitor\n")
+            print(f"\n  {c(GREEN, '✓')} 已开启，下次 SSH 登录自动进入面板")
+    else:
+        # 关闭
+        if not is_enabled:
+            print(f"\n  {c(YELLOW, '已经是关闭状态')}")
+        else:
+            with open(bashrc, "r") as f:
+                lines = f.readlines()
+            with open(bashrc, "w") as f:
+                skip = False
+                for line in lines:
+                    if marker in line:
+                        skip = True
+                        continue
+                    if skip and line.strip() == "monitor":
+                        skip = False
+                        continue
+                    f.write(line)
+            print(f"\n  {c(GREEN, '✓')} 已关闭")
     pause()
 
 
@@ -655,13 +738,31 @@ def action_alert_settings():
     """[16] 告警设置"""
     clear_screen()
     step_frame("告警设置")
-    step_row(f"  钉钉告警:  {'已配置' if DINGTALK_WEBHOOK else c(YELLOW, '未配置')}")
-    step_row(f"  邮件告警:  {'已启用' if EMAIL_ENABLED else c(DIM, '未启用')}")
-    step_row(f"  磁盘阈值:  {DISK_ALERT_MB} MB")
-    step_row(f"  日志保留:  {LOG_RETENTION_DAYS} 天")
+    step_row(c(BOLD, "  告警通道"))
     step_sep()
-    step_row(f"  {c(DIM, '修改请进入 [9] 编辑配置')}")
-    step_end()
+    step_row(f"  钉钉告警:    {'已配置' if DINGTALK_WEBHOOK else c(YELLOW, '未配置')}")
+    step_row(f"  邮件告警:    {'已启用' if EMAIL_ENABLED else c(DIM, '已禁用')}")
+    step_row(f"  讯飞 AI:     {'已启用' if XFYUN_ENABLED else c(DIM, '已禁用')}")
+    step_sep()
+    step_row(c(BOLD, "  告警开关"))
+    step_sep()
+    rt_st = c(GREEN, "已开启") if ROUTE_ALERT_ENABLED else c(DIM, "已关闭")
+    step_row(f"  路由变化告警: {rt_st}")
+    step_sep()
+    step_row(c(BOLD, "  告警阈值"))
+    step_sep()
+    step_row(f"  磁盘告警:    {DISK_ALERT_MB} MB")
+    step_row(f"  日志保留:    {LOG_RETENTION_DAYS} 天")
+
+    step_sep()
+    options = ["切换路由变化告警"]
+    idx = ask_choice("选择操作", options)
+    if idx == 0:
+        import config as cfg
+        cfg.ROUTE_ALERT_ENABLED = not ROUTE_ALERT_ENABLED
+        save_config()
+        st = "已开启" if cfg.ROUTE_ALERT_ENABLED else "已关闭"
+        print(f"\n  {c(GREEN, '✓')} 路由变化告警 {st}")
     pause()
 
 
@@ -894,9 +995,15 @@ def main():
         print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
 
         try:
-            choice = input(f"\n  {c(YELLOW, '请选择')} [0-17]: ").strip()
+            choice = input(f"\n  {c(YELLOW, '请选择')} [0-17 | q退出 r刷新]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             break
+
+        # 快捷键
+        if choice == "q":
+            break
+        if choice == "r":
+            continue
 
         actions = {
             "0": None,
