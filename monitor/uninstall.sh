@@ -163,6 +163,7 @@ if crontab -l 2>/dev/null | grep -q "$CRON_TAG"; then
     step_row "${GREEN}✓ 已清理旧版 traffic_monitor_v2 定时任务${NC}"
 else
     step_row "${DIM}未发现旧版 cron 任务${NC}"
+fi
 step_bottom
 
 # 5. 删除安装目录和快捷命令

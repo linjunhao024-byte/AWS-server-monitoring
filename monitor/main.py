@@ -17,9 +17,11 @@ from config import (
     INTERFACE, DATA_DIR, INSTALL_DIR,
     DINGTALK_WEBHOOK, DINGTALK_SECRET,
     XFYUN_API_KEY, XFYUN_ENABLED,
-    EMAIL_ENABLED, SMTP_USERNAME, EMAIL_RECIPIENTS,
+    EMAIL_ENABLED, SMTP_SERVER, SMTP_PORT, SMTP_USE_SSL,
+    SMTP_USERNAME, SMTP_PASSWORD, EMAIL_RECIPIENTS,
     SERVER_ALIAS, ROUTE_TARGET, ROUTE_INTERVAL,
     LOG_RETENTION_DAYS, DISK_ALERT_MB, CURRENT_VERSION,
+    ROUTE_ALERT_ENABLED,
     save_config,
 )
 from utils import (
@@ -602,8 +604,10 @@ def action_uninstall():
         pause()
         return
 
-    services = ["bandwidth-monitor", "route-monitor", "bandwidth-analyzer.timer",
-                "bandwidth-maintenance.timer", "bandwidth-data-check.timer"]
+    services = ["bandwidth-monitor", "route-monitor",
+                "bandwidth-analyzer.service", "bandwidth-analyzer.timer",
+                "bandwidth-maintenance.service", "bandwidth-maintenance.timer",
+                "bandwidth-data-check.service", "bandwidth-data-check.timer"]
     for svc in services:
         subprocess.run(["systemctl", "stop", svc], capture_output=True, timeout=5)
         subprocess.run(["systemctl", "disable", svc], capture_output=True, timeout=5)
@@ -922,7 +926,15 @@ def main():
         action_status()
         return
     if args.report:
-        action_manual_push()
+        from reporter import get_traffic_data, build_dingtalk_message
+        traffic = get_traffic_data()
+        if traffic:
+            msg = build_dingtalk_message(traffic)
+            from notifications import send_dingtalk
+            send_dingtalk("服务器流量日报", msg)
+            print(f"  {c(GREEN, '✓')} 日报已发送")
+        else:
+            print(f"  {c(RED, '✗')} 无法获取流量数据")
         return
     if args.rotate:
         result = rotate_logs()

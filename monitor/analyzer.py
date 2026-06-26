@@ -693,3 +693,68 @@ def build_llm_prompt(analysis: dict, rx_stats: dict, tx_stats: dict,
    - 当前模式下，触发限速的概率有多大？"""
 
     return prompt
+
+
+# ---------------------------------------------------------------------------
+# CLI 入口（供 systemd timer 调用）
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="带宽积分分析")
+    parser.add_argument("--auto", action="store_true", help="自动分析最新数据")
+    parser.add_argument("--files", nargs="+", help="指定文件")
+    parser.add_argument("--no-dingtalk", action="store_true", help="不推送钉钉")
+    parser.add_argument("--no-llm", action="store_true", help="不调用 LLM")
+    args = parser.parse_args()
+
+    from stats import basic_stats
+    from notifications import send_dingtalk, call_xfyun
+    from config import XFYUN_ENABLED
+
+    if args.auto:
+        latest = find_latest_file()
+        if not latest:
+            print("[WARN] 未找到数据文件", file=sys.stderr)
+            sys.exit(0)
+        file_paths = [latest]
+    elif args.files:
+        file_paths = args.files
+    else:
+        print("用法: analyzer.py --auto 或 --files f1.csv f2.csv", file=sys.stderr)
+        sys.exit(1)
+
+    rows = load_csv_files(file_paths)
+    if not rows:
+        print("[WARN] 没有有效数据", file=sys.stderr)
+        sys.exit(0)
+
+    analysis = reverse_engineer_credits(rows)
+    report = generate_report(rows, analysis, file_paths)
+
+    # LLM 分析
+    if XFYUN_ENABLED and not args.no_llm:
+        rx_vals = [r["rx_mbps"] for r in rows]
+        tx_vals = [r["tx_mbps"] for r in rows]
+        cpu_vals = [r["cpu_load_1m"] for r in rows]
+        days = (rows[-1]["timestamp"] - rows[0]["timestamp"]).total_seconds() / 86400
+        prompt = build_llm_prompt(
+            analysis,
+            basic_stats(rx_vals, "Rx"),
+            basic_stats(tx_vals, "Tx"),
+            basic_stats(cpu_vals, "CPU"),
+            days,
+            len(rows),
+            rows=rows,
+        )
+        llm_result = call_xfyun(prompt)
+        if llm_result:
+            report += "\n---\n\n## AI 深度分析\n\n" + llm_result + "\n"
+
+    # 输出
+    print(report)
+
+    # 钉钉推送
+    if not args.no_dingtalk:
+        send_dingtalk("带宽积分分析报告", report)
