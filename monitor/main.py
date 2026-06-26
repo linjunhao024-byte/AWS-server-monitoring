@@ -693,6 +693,11 @@ def menu_config():
                 result = do_update()
                 if result["success"]:
                     print(f"  {c(GREEN, '✓')} {result['message']}")
+                    print()
+                    print(f"  {c(YELLOW, '按回车重启菜单以加载新版本...')}")
+                    input()
+                    # 重启自身
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
                 else:
                     print(f"  {c(RED, '✗')} {result['message']}")
 
