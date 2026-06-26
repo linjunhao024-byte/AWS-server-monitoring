@@ -285,18 +285,19 @@ install_files() {
 
     # 安装全局快捷命令
     step_row "安装快捷命令..."
-    if [ -f "${SCRIPT_DIR}/monitor.sh" ]; then
-        cp "${SCRIPT_DIR}/monitor.sh" /usr/local/bin/monitor
-        chmod +x /usr/local/bin/monitor
-        step_row "  ${GREEN}✓${NC} 可用命令: ${YELLOW}monitor${NC}"
-    else
-        # 如果 monitor.sh 不存在，直接创建
-        cat > /usr/local/bin/monitor << 'CMDEOF'
+    # 创建 monitor 主命令
+    cat > /usr/local/bin/monitor << 'CMDEOF'
 #!/usr/bin/env bash
 exec python3 /opt/bandwidth_monitor/main.py "$@"
 CMDEOF
-        chmod +x /usr/local/bin/monitor
-        step_row "  ${GREEN}✓${NC} 可用命令: ${YELLOW}monitor${NC}"
+    chmod +x /usr/local/bin/monitor
+    step_row "  ${GREEN}✓${NC} 主命令: ${YELLOW}monitor${NC}"
+
+    # 自定义快捷键
+    if [ -n "${CFG_SHORTCUT:-}" ] && [ "$CFG_SHORTCUT" != "monitor" ]; then
+        ln -sf /usr/local/bin/monitor "/usr/local/bin/${CFG_SHORTCUT}"
+        step_row "  ${GREEN}✓${NC} 快捷键: ${YELLOW}${CFG_SHORTCUT}${NC} → monitor"
+    fi
     fi
 
     step_row "${GREEN}✓ 文件安装完成${NC}"
@@ -535,7 +536,7 @@ interactive_config() {
 
     # 5. 路由监测
     echo ""
-    step_title "5/5  路由监测"
+    step_title "5/6  路由监测"
     step_sep
     CFG_ROUTE_TARGET=$(ask_input "监测目标" "${CFG_ROUTE_TARGET}")
     while true; do
@@ -545,6 +546,21 @@ interactive_config() {
         fi
         echo -e "  ${RED}请输入 ≥10 的整数${NC}"
     done
+    step_bottom
+
+    # 6. 快捷键
+    echo ""
+    step_title "6/6  快捷命令"
+    step_sep
+    step_row "${DIM}默认命令: monitor${NC}"
+    step_row "${DIM}可自定义更短的快捷键（如 m、mo、mt）${NC}"
+    step_sep
+    CFG_SHORTCUT=$(ask_input "快捷命令名称" "monitor")
+    # 验证：只允许字母数字
+    if [[ ! "$CFG_SHORTCUT" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        CFG_SHORTCUT="monitor"
+        echo -e "  ${YELLOW}无效名称，使用默认: monitor${NC}"
+    fi
     step_bottom
 }
 

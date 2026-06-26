@@ -808,14 +808,33 @@ def action_update():
     pause()
 
 
-def action_auto_panel():
-    """[14] 自动面板开关"""
-    clear_screen()
-    step_frame("自动面板")
-    step_row(f"  SSH 登录后自动进入监控面板")
-    step_sep()
+def _get_current_shortcuts() -> list[str]:
+    """获取当前所有指向 monitor 的快捷命令。"""
+    shortcuts = []
+    bin_dir = "/usr/local/bin"
+    monitor_path = os.path.join(bin_dir, "monitor")
+    if not os.path.exists(monitor_path):
+        return shortcuts
+    for name in os.listdir(bin_dir):
+        path = os.path.join(bin_dir, name)
+        if os.path.islink(path) and os.readlink(path) == monitor_path:
+            shortcuts.append(name)
+        elif os.path.isfile(path) and path != monitor_path:
+            try:
+                with open(path, "r") as f:
+                    if "main.py" in f.read():
+                        shortcuts.append(name)
+            except Exception:
+                pass
+    return sorted(set(shortcuts))
 
-    # 检查当前状态
+
+def action_auto_panel():
+    """[14] 自动面板 & 快捷命令"""
+    clear_screen()
+    step_frame("自动面板 & 快捷命令")
+
+    # 自动面板状态
     bashrc = os.path.expanduser("~/.bashrc")
     marker = "# AWS-Monitor-AutoPanel"
     is_enabled = False
@@ -823,24 +842,39 @@ def action_auto_panel():
         with open(bashrc, "r") as f:
             is_enabled = marker in f.read()
 
-    st = c(GREEN, "已开启") if is_enabled else c(DIM, "已关闭")
-    step_row(f"  当前状态: {st}")
+    auto_st = c(GREEN, "已开启") if is_enabled else c(DIM, "已关闭")
+    step_row(f"  SSH 登录自动面板: {auto_st}")
     step_sep()
-    options = ["开启自动面板", "关闭自动面板"]
+
+    # 快捷命令状态
+    shortcuts = _get_current_shortcuts()
+    if shortcuts:
+        shortcut_str = ", ".join([c(GREEN, s) for s in shortcuts])
+        step_row(f"  可用命令: {shortcut_str}")
+    else:
+        step_row(f"  可用命令: {c(DIM, '未设置')}")
+    step_row(f"  {c(DIM, '输入命令名即可进入菜单面板')}")
+    step_sep()
+
+    options = [
+        "开启自动面板",
+        "关闭自动面板",
+        "添加快捷命令",
+        "删除快捷命令",
+    ]
     idx = ask_choice("选择操作", options)
     if idx == -1:
         return
 
     if idx == 0:
-        # 开启
         if is_enabled:
             print(f"\n  {c(YELLOW, '已经是开启状态')}")
         else:
             with open(bashrc, "a") as f:
                 f.write(f"\n{marker}\nmonitor\n")
             print(f"\n  {c(GREEN, '✓')} 已开启，下次 SSH 登录自动进入面板")
-    else:
-        # 关闭
+
+    elif idx == 1:
         if not is_enabled:
             print(f"\n  {c(YELLOW, '已经是关闭状态')}")
         else:
@@ -857,6 +891,38 @@ def action_auto_panel():
                         continue
                     f.write(line)
             print(f"\n  {c(GREEN, '✓')} 已关闭")
+
+    elif idx == 2:
+        name = input(f"\n  输入快捷命令名称 (如 m, mo, mt): ").strip()
+        if not name:
+            return
+        if not all(c.isalnum() or c in '_-' for c in name):
+            print(f"  {c(RED, '无效名称，只允许字母、数字、下划线、横线')}")
+        elif os.path.exists(f"/usr/local/bin/{name}"):
+            print(f"  {c(RED, '{name} 已被其他命令占用')}")
+        else:
+            os.symlink("/usr/local/bin/monitor", f"/usr/local/bin/{name}")
+            print(f"  {c(GREEN, '✓')} 已创建: {name} → monitor")
+
+    elif idx == 3:
+        if not shortcuts:
+            print(f"\n  {c(YELLOW, '没有可删除的快捷命令')}")
+        else:
+            print()
+            for i, s in enumerate(shortcuts, 1):
+                print(f"  {c(YELLOW, str(i))}. {s}")
+            try:
+                ch = int(input(f"\n  选择要删除的编号: ")) - 1
+                if 0 <= ch < len(shortcuts):
+                    target = shortcuts[ch]
+                    if target == "monitor":
+                        print(f"  {c(RED, '不能删除主命令 monitor')}")
+                    else:
+                        os.remove(f"/usr/local/bin/{target}")
+                        print(f"  {c(GREEN, '✓')} 已删除: {target}")
+            except (ValueError, IndexError):
+                pass
+
     pause()
 
 
