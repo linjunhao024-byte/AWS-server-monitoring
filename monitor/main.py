@@ -1093,7 +1093,6 @@ def action_alert_settings():
     step_row(f"  周报发送日:  每{week_days[WEEKLY_REPORT_DAY]}")
     step_row(f"  发件人名称:  {SENDER_NAME}")
 
-    step_sep()
     options = ["切换路由变化告警"]
     idx = ask_choice("选择操作", options)
     if idx == 0:
