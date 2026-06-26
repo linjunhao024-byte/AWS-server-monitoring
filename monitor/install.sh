@@ -341,16 +341,17 @@ write_config() {
     fi
 
     # 转义所有用户输入
-    local _alias _wh _secret _xfyun _smtp_user _smtp_pass _route_target
+    local _alias _wh _secret _xfyun _smtp_user _smtp_pass _route_target _sender
     _alias=$(json_escape "$CFG_SERVER_ALIAS")
-    _wh=$(json_escape "$CFG_DINGTALK_WEBHOOK")
-    _secret=$(json_escape "$CFG_DINGTALK_SECRET")
-    _xfyun=$(json_escape "$CFG_XFYUN_API_KEY")
-    _smtp_user=$(json_escape "$CFG_SMTP_USERNAME")
-    _smtp_pass=$(json_escape "$CFG_SMTP_PASSWORD")
+    _wh=$(json_escape "${CFG_DINGTALK_WEBHOOK:-}")
+    _secret=$(json_escape "${CFG_DINGTALK_SECRET:-}")
+    _xfyun=$(json_escape "${CFG_XFYUN_API_KEY:-}")
+    _smtp_user=$(json_escape "${CFG_SMTP_USERNAME:-}")
+    _smtp_pass=$(json_escape "${CFG_SMTP_PASSWORD:-}")
     _route_target=$(json_escape "$CFG_ROUTE_TARGET")
     _tg_token=$(json_escape "${CFG_TG_BOT_TOKEN:-}")
     _tg_chatid=$(json_escape "${CFG_TG_CHAT_ID:-}")
+    _sender=$(json_escape "${CFG_SENDER_NAME:-服务器监控}")
 
     cat > "${CFG_INSTALL_DIR}/settings.json" << JSONEOF
 {
@@ -362,14 +363,23 @@ write_config() {
   "TG_BOT_TOKEN": "${_tg_token}",
   "TG_CHAT_ID": "${_tg_chatid}",
   "XFYUN_API_KEY": "${_xfyun}",
-  "XFYUN_ENABLED": ${CFG_XFYUN_ENABLED},
-  "EMAIL_ENABLED": ${CFG_EMAIL_ENABLED},
+  "XFYUN_MODEL": "${CFG_XFYUN_MODEL:-4.0Ultra}",
+  "XFYUN_ENABLED": ${CFG_XFYUN_ENABLED:-false},
+  "EMAIL_ENABLED": ${CFG_EMAIL_ENABLED:-false},
+  "SMTP_SERVER": "${CFG_SMTP_SERVER:-smtp.exmail.qq.com}",
+  "SMTP_PORT": ${CFG_SMTP_PORT:-465},
+  "SMTP_USE_SSL": ${CFG_SMTP_USE_SSL:-true},
   "SMTP_USERNAME": "${_smtp_user}",
   "SMTP_PASSWORD": "${_smtp_pass}",
   "EMAIL_RECIPIENTS": ${recipients_json},
+  "SENDER_NAME": "${_sender}",
+  "WEEKLY_REPORT_DAY": ${CFG_WEEKLY_REPORT_DAY:-6},
   "ROUTE_TARGET": "${_route_target}",
-  "ROUTE_INTERVAL": ${CFG_ROUTE_INTERVAL},
-  "DAILY_REPORT_TIME": "23:00"
+  "ROUTE_INTERVAL": ${CFG_ROUTE_INTERVAL:-300},
+  "ROUTE_ALERT_ENABLED": ${CFG_ROUTE_ALERT_ENABLED:-true},
+  "LOG_RETENTION_DAYS": ${CFG_LOG_RETENTION_DAYS:-30},
+  "DISK_ALERT_MB": ${CFG_DISK_ALERT_MB:-1024},
+  "DAILY_REPORT_TIME": "${CFG_DAILY_REPORT_TIME:-23:00}"
 }
 JSONEOF
 
@@ -494,91 +504,139 @@ interactive_config() {
     step_title "交互式配置"
     step_row ""
     step_row "以下配置将写入 settings.json，安装完成后仍可通过"
-    step_row "菜单 '5. 配置管理' 随时修改。"
+    step_row "菜单 '配置管理' 随时修改。"
     step_row ""
     step_row "${DIM}直接回车跳过可选项，稍后配置。${NC}"
     step_bottom
 
-    # 1. 服务器别名
+    # ── 1. 基本信息 ──
     echo ""
-    step_title "1/5  基本信息"
+    step_title "1/6  基本信息"
     step_sep
     CFG_SERVER_ALIAS=$(ask_input "服务器别名" "${CFG_SERVER_ALIAS:-My-Server}")
     step_bottom
 
-    # 2. 钉钉
+    # ── 2. 推送配置（层级递进） ──
     echo ""
-    step_title "2/6  钉钉机器人 ${DIM}(可选)${NC}"
+    step_title "2/6  推送配置"
     step_sep
-    step_row "${DIM}用于推送积分分析报告、流量日报、路由变化告警${NC}"
+    step_row "${DIM}告警通知、日报、路由变化告警等${NC}"
     step_sep
-    CFG_DINGTALK_WEBHOOK=$(ask_input "Webhook URL" "")
-    if [ -n "$CFG_DINGTALK_WEBHOOK" ]; then
-        CFG_DINGTALK_SECRET=$(ask_input "加签密钥 (SEC开头)" "")
+    if ask_yes_no "是否启用推送通知？" "y"; then
+        step_sep
+        step_row "  选择推送方式（可多选，输入编号）:"
+        step_row ""
+        step_row "    ${YELLOW}1${NC}  钉钉机器人"
+        step_row "    ${YELLOW}2${NC}  Telegram 机器人"
+        step_row "    ${YELLOW}3${NC}  邮件"
+        step_row ""
+        local push_choices
+        push_choices=$(ask_input "推送方式 (如 1,2 或 1,3)" "1")
+        step_sep
+
+        # 钉钉
+        if echo "$push_choices" | grep -q "1"; then
+            step_row ""
+            step_row "  ${BOLD}── 钉钉配置 ──${NC}"
+            step_row "  ${DIM}从钉钉群机器人设置中获取${NC}"
+            CFG_DINGTALK_WEBHOOK=$(ask_input "  Webhook URL" "")
+            if [ -n "$CFG_DINGTALK_WEBHOOK" ]; then
+                CFG_DINGTALK_SECRET=$(ask_input "  加签密钥 (SEC开头)" "")
+            fi
+        fi
+
+        # Telegram
+        if echo "$push_choices" | grep -q "2"; then
+            step_row ""
+            step_row "  ${BOLD}── Telegram 配置 ──${NC}"
+            step_row "  ${DIM}Token 从 @BotFather 获取，Chat ID 从 @userinfobot 获取${NC}"
+            CFG_TG_BOT_TOKEN=$(ask_input "  Bot Token" "")
+            if [ -n "$CFG_TG_BOT_TOKEN" ]; then
+                CFG_TG_CHAT_ID=$(ask_input "  Chat ID" "")
+            fi
+        fi
+
+        # 邮件
+        if echo "$push_choices" | grep -q "3"; then
+            step_row ""
+            step_row "  ${BOLD}── 邮件配置 ──${NC}"
+            step_row "  ${DIM}用于发送 HTML 格式的流量周报${NC}"
+            CFG_EMAIL_ENABLED="true"
+            CFG_SMTP_SERVER=$(ask_input "  SMTP 服务器" "smtp.exmail.qq.com")
+            CFG_SMTP_PORT=$(ask_input "  SMTP 端口" "465")
+            if ask_yes_no "  使用 SSL？" "y"; then
+                CFG_SMTP_USE_SSL="true"
+            else
+                CFG_SMTP_USE_SSL="false"
+            fi
+            CFG_SMTP_USERNAME=$(ask_input "  SMTP 用户名 (发件人)" "")
+            CFG_SMTP_PASSWORD=$(ask_input "  SMTP 密码" "")
+            CFG_EMAIL_RECIPIENTS=$(ask_input "  收件人 (多个用逗号分隔)" "")
+            CFG_SENDER_NAME=$(ask_input "  发件人名称" "服务器监控")
+            step_row ""
+            step_row "  周报发送日:"
+            step_row "    ${YELLOW}0${NC} 周一  ${YELLOW}1${NC} 周二  ${YELLOW}2${NC} 周三  ${YELLOW}3${NC} 周四"
+            step_row "    ${YELLOW}4${NC} 周五  ${YELLOW}5${NC} 周六  ${YELLOW}6${NC} 周日"
+            local week_day
+            week_day=$(ask_input "  选择 [0-6]" "6")
+            if [[ "$week_day" =~ ^[0-6]$ ]]; then
+                CFG_WEEKLY_REPORT_DAY="$week_day"
+            fi
+        fi
     fi
     step_bottom
 
-    # 3. Telegram
+    # ── 3. AI 分析 ──
     echo ""
-    step_title "3/6  Telegram 机器人 ${DIM}(可选)${NC}"
+    step_title "3/6  AI 深度分析 ${DIM}(可选)${NC}"
     step_sep
-    step_row "${DIM}海外服务器推荐使用 Telegram 推送，支持内联键盘操作${NC}"
+    step_row "${DIM}使用讯飞星火大模型对带宽数据进行智能分析${NC}"
     step_sep
-    CFG_TG_BOT_TOKEN=$(ask_input "Bot Token (从 @BotFather 获取)" "")
-    if [ -n "$CFG_TG_BOT_TOKEN" ]; then
-        CFG_TG_CHAT_ID=$(ask_input "Chat ID (从 @userinfobot 获取)" "")
+    if ask_yes_no "是否启用 AI 分析？" "n"; then
+        CFG_XFYUN_API_KEY=$(ask_input "  API Key" "")
+        if [ -n "$CFG_XFYUN_API_KEY" ]; then
+            CFG_XFYUN_ENABLED="true"
+            CFG_XFYUN_MODEL=$(ask_input "  模型名称" "4.0Ultra")
+        fi
     fi
     step_bottom
 
-    # 3. 讯飞星火 LLM
+    # ── 4. 监控参数 ──
     echo ""
-    step_title "4/6  讯飞星火大模型 ${DIM}(可选)${NC}"
+    step_title "4/6  监控参数"
     step_sep
-    step_row "${DIM}用于积分分析的 AI 深度解读${NC}"
-    step_sep
-    CFG_XFYUN_API_KEY=$(ask_input "API Key" "")
-    if [ -n "$CFG_XFYUN_API_KEY" ]; then
-        CFG_XFYUN_ENABLED="true"
-    fi
-    step_bottom
-
-    # 4. 邮件
-    echo ""
-    step_title "5/6  邮件周报 ${DIM}(可选)${NC}"
-    step_sep
-    step_row "${DIM}每周日发送 HTML 格式的流量周报${NC}"
-    step_sep
-    if ask_yes_no "是否启用邮件功能？" "n"; then
-        CFG_EMAIL_ENABLED="true"
-        CFG_SMTP_USERNAME=$(ask_input "SMTP 用户名 (发件人)" "")
-        CFG_SMTP_PASSWORD=$(ask_input "SMTP 密码" "")
-        CFG_EMAIL_RECIPIENTS=$(ask_input "收件人 (多个用逗号分隔)" "")
-    fi
-    step_bottom
-
-    # 5. 路由监测
-    echo ""
-    step_title "6/7  路由监测"
-    step_sep
-    CFG_ROUTE_TARGET=$(ask_input "监测目标" "${CFG_ROUTE_TARGET}")
+    CFG_ROUTE_TARGET=$(ask_input "路由监测目标" "${CFG_ROUTE_TARGET}")
     while true; do
-        CFG_ROUTE_INTERVAL=$(ask_input "检测间隔(秒)" "${CFG_ROUTE_INTERVAL}")
+        CFG_ROUTE_INTERVAL=$(ask_input "路由检测间隔(秒)" "${CFG_ROUTE_INTERVAL}")
         if [[ "$CFG_ROUTE_INTERVAL" =~ ^[0-9]+$ ]] && [ "$CFG_ROUTE_INTERVAL" -ge 10 ]; then
             break
         fi
         echo -e "  ${RED}请输入 ≥10 的整数${NC}"
     done
+    if ask_yes_no "是否开启路由变化告警？" "y"; then
+        CFG_ROUTE_ALERT_ENABLED="true"
+    else
+        CFG_ROUTE_ALERT_ENABLED="false"
+    fi
     step_bottom
 
-    # 6. 快捷键
+    # ── 5. 运维参数 ──
     echo ""
-    step_title "7/7  快捷命令"
+    step_title "5/6  运维参数"
+    step_sep
+    CFG_DAILY_REPORT_TIME=$(ask_input "每日推送时间 (HH:MM)" "23:00")
+    CFG_LOG_RETENTION_DAYS=$(ask_input "日志保留天数" "30")
+    CFG_DISK_ALERT_MB=$(ask_input "磁盘告警阈值 (MB)" "1024")
+    step_bottom
+
+    # ── 6. 快捷命令 ──
+    echo ""
+    step_title "6/6  快捷命令"
     step_sep
     step_row "${DIM}默认命令: monitor${NC}"
     step_row "${DIM}可自定义更短的快捷键（如 m、mo、mt）${NC}"
     step_sep
     CFG_SHORTCUT=$(ask_input "快捷命令名称" "monitor")
-    # 验证：只允许字母数字
     if [[ ! "$CFG_SHORTCUT" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         CFG_SHORTCUT="monitor"
         echo -e "  ${YELLOW}无效名称，使用默认: monitor${NC}"
@@ -758,32 +816,15 @@ main() {
     step_row "  网卡:        ${GREEN}${CFG_INTERFACE}${NC}"
     step_row "  安装目录:    ${CFG_INSTALL_DIR}"
     step_row "  数据目录:    ${CFG_DATA_DIR}"
-    step_row ""
-
-    if [ -n "$CFG_DINGTALK_WEBHOOK" ]; then
-        step_row "  钉钉:        ${GREEN}已配置${NC}"
-    else
-        step_row "  钉钉:        ${DIM}未配置${NC}"
-    fi
-
-    if [ -n "${CFG_TG_BOT_TOKEN:-}" ]; then
-        step_row "  Telegram:    ${GREEN}已配置${NC}"
-    else
-        step_row "  Telegram:    ${DIM}未配置${NC}"
-    fi
-
-    if [ "$CFG_XFYUN_ENABLED" = "true" ]; then
-        step_row "  讯飞星火:    ${GREEN}已启用${NC}"
-    else
-        step_row "  讯飞星火:    ${DIM}未启用${NC}"
-    fi
-
-    if [ "$CFG_EMAIL_ENABLED" = "true" ]; then
-        step_row "  邮件周报:    ${GREEN}已启用${NC}"
-    else
-        step_row "  邮件周报:    ${DIM}未启用${NC}"
-    fi
-
+    step_sep
+    step_row "  钉钉:        $(if [ -n "$CFG_DINGTALK_WEBHOOK" ]; then echo "${GREEN}已配置${NC}"; else echo "${DIM}未配置${NC}"; fi)"
+    step_row "  Telegram:    $(if [ -n "${CFG_TG_BOT_TOKEN:-}" ]; then echo "${GREEN}已配置${NC}"; else echo "${DIM}未配置${NC}"; fi)"
+    step_row "  讯飞星火:    $(if [ "$CFG_XFYUN_ENABLED" = "true" ]; then echo "${GREEN}已启用${NC}"; else echo "${DIM}未启用${NC}"; fi)"
+    step_row "  邮件:        $(if [ "$CFG_EMAIL_ENABLED" = "true" ]; then echo "${GREEN}已启用${NC}"; else echo "${DIM}未启用${NC}"; fi)"
+    step_sep
+    step_row "  路由目标:    ${GREEN}${CFG_ROUTE_TARGET}${NC}"
+    step_row "  路由间隔:    ${CFG_ROUTE_INTERVAL}秒"
+    step_row "  快捷命令:    ${YELLOW}monitor${NC}"
     step_row ""
     step_bottom
 
