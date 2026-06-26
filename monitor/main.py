@@ -562,6 +562,8 @@ def action_edit_config():
             step_row(f"  {c(YELLOW, '[3]')} SMTP 用户名")
             step_row(f"  {c(YELLOW, '[4]')} SMTP 密码")
             step_row(f"  {c(YELLOW, '[5]')} 收件人")
+            step_row(f"  {c(YELLOW, '[6]')} 发件人名称 ({SENDER_NAME})")
+            step_row(f"  {c(YELLOW, '[7]')} 周报发送日 ({['周一','周二','周三','周四','周五','周六','周日'][WEEKLY_REPORT_DAY]})")
             step_end()
             sub = input(f"  选择: ").strip()
             if sub == "1":
@@ -599,6 +601,25 @@ def action_edit_config():
                     cfg.EMAIL_RECIPIENTS = [x.strip() for x in r.split(",") if x.strip()]
                     save_config()
                     print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "6":
+                name = input(f"  发件人名称 [{SENDER_NAME}]: ").strip()
+                if name:
+                    cfg.SENDER_NAME = name
+                    save_config()
+                    print(f"  {c(GREEN, '✓')} 已保存")
+            elif sub == "7":
+                days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+                for i, d in enumerate(days):
+                    marker = c(GREEN, " <-- 当前") if i == WEEKLY_REPORT_DAY else ""
+                    print(f"  {c(YELLOW, str(i))}. {d}{marker}")
+                try:
+                    ch_day = int(input(f"  选择 [0-6]: ").strip())
+                    if 0 <= ch_day <= 6:
+                        cfg.WEEKLY_REPORT_DAY = ch_day
+                        save_config()
+                        print(f"  {c(GREEN, '✓')} 周报将在每周{days[ch_day]}发送")
+                except ValueError:
+                    pass
 
         elif ch == "7":
             clear_screen()
@@ -974,6 +995,12 @@ def action_alert_settings():
     step_sep()
     step_row(f"  磁盘告警:    {DISK_ALERT_MB} MB")
     step_row(f"  日志保留:    {LOG_RETENTION_DAYS} 天")
+    step_sep()
+    step_row(c(BOLD, "  报表设置"))
+    step_sep()
+    week_days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    step_row(f"  周报发送日:  每{week_days[WEEKLY_REPORT_DAY]}")
+    step_row(f"  发件人名称:  {SENDER_NAME}")
 
     step_sep()
     options = ["切换路由变化告警"]
@@ -1269,15 +1296,26 @@ def main():
     parser.add_argument("--update", action="store_true", help="一键更新")
     args = parser.parse_args()
 
-    # CLI 快捷命令
-    if args.check:
-        action_status()
+    # CLI 快捷命令（非交互模式）
+    if args.check or args.status:
+        results = health_check()
+        for r in results:
+            icon = {"ok": "✓", "warn": "⚠", "error": "✗"}.get(r["status"], "?")
+            print(f"  {icon}  {r['component']:<12} {r['message']}")
         return
     if args.analyze:
-        action_ai_analysis()
-        return
-    if args.status:
-        action_status()
+        from analyzer import find_latest_file, load_csv_files, reverse_engineer_credits, generate_report
+        latest = find_latest_file()
+        if not latest:
+            print("  未找到数据文件")
+            return
+        rows = load_csv_files([latest])
+        if not rows:
+            print("  没有有效数据")
+            return
+        analysis = reverse_engineer_credits(rows)
+        report = generate_report(rows, analysis, [latest])
+        print(report)
         return
     if args.report:
         from reporter import get_traffic_data, build_dingtalk_message
