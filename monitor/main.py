@@ -155,7 +155,10 @@ def ask_choice(prompt: str, options: list[str]) -> int:
     step_end()
     while True:
         try:
-            choice = int(input(f"  {c(YELLOW, prompt)} [0-{len(options)}]: "))
+            raw = input(f"  {c(YELLOW, prompt)} [0-{len(options)}]: ").strip()
+            if not raw:
+                return -1  # 空输入 = 返回
+            choice = int(raw)
             if choice == 0:
                 return -1
             if 1 <= choice <= len(options):
@@ -657,7 +660,7 @@ def action_edit_config():
             step_end()
             sub = input(f"  选择: ").strip()
             if sub == "1":
-                cfg.EMAIL_ENABLED = not EMAIL_ENABLED
+                cfg.EMAIL_ENABLED = not cfg.EMAIL_ENABLED
                 save_config()
                 st = "已启用" if cfg.EMAIL_ENABLED else "已禁用"
                 print(f"  {c(GREEN, '✓')} 邮件 {st}")
@@ -1097,7 +1100,7 @@ def action_alert_settings():
     idx = ask_choice("选择操作", options)
     if idx == 0:
         import config as cfg
-        cfg.ROUTE_ALERT_ENABLED = not ROUTE_ALERT_ENABLED
+        cfg.ROUTE_ALERT_ENABLED = not cfg.ROUTE_ALERT_ENABLED
         save_config()
         st = "已开启" if cfg.ROUTE_ALERT_ENABLED else "已关闭"
         print(f"\n  {c(GREEN, '✓')} 路由变化告警 {st}")
