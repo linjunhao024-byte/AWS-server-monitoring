@@ -398,10 +398,11 @@ def call_xfyun(prompt: str) -> str | None:
             "messages": [
                 {
                     "role": "system",
-                    "content": "你是一位云计算和 AIOps 专家，擅长分析服务器带宽数据和云厂商积分机制。请用结构化的中文回答。"
+                    "content": "你是一位云计算和 AIOps 专家，擅长分析服务器带宽数据和云厂商积分机制。请用简洁的中文回答，控制在300字以内。"
                 },
                 {"role": "user", "content": prompt},
             ],
+            "max_tokens": 600,
             "stream": True,
         }
 

@@ -681,9 +681,9 @@ def build_daily_detail_message() -> str:
                 )
                 llm_result = call_xfyun(prompt)
                 if llm_result:
-                    # 截取前 800 字符（Telegram 消息长度限制）
-                    if len(llm_result) > 800:
-                        llm_result = llm_result[:800] + "..."
+                    # 截取前 300 字符
+                    if len(llm_result) > 300:
+                        llm_result = llm_result[:300] + "..."
                     msg += f"🤖 *AI 分析*\n\n{llm_result}\n\n"
 
     msg += f"⏰ {now_iso()}"
