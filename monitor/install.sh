@@ -237,6 +237,9 @@ install_missing_deps() {
                 echo -e "  ${DIM}安装 traceroute...${NC}"
                 apt install -y -qq traceroute 2>/dev/null && ok_msg "traceroute 已安装" || warn_msg "traceroute 安装失败"
             fi
+
+            echo -e "  ${DIM}安装 Python requests（AI分析需要）...${NC}"
+            pip3 install requests --break-system-packages 2>/dev/null || pip3 install requests 2>/dev/null || warn_msg "requests 安装失败，AI分析功能将不可用"
             echo ""
         fi
     else
@@ -308,6 +311,8 @@ json_escape() {
     s="${s//$'\n'/\\n}" # 换行
     s="${s//$'\r'/\\r}" # 回车
     s="${s//$'\t'/\\t}" # 制表符
+    s="${s//\$/\\$}"    # 美元符号（防 shell 展开）
+    s="${s//\`/\\\`}"   # 反引号（防 shell 展开）
     echo "$s"
 }
 
