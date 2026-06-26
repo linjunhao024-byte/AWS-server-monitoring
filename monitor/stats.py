@@ -6,6 +6,8 @@
 从 bandwidth_analyzer.py 提取的纯数学函数。
 """
 
+from __future__ import annotations
+
 import statistics
 
 

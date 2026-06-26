@@ -509,8 +509,6 @@ def notify_service_stop(service_name: str, reason: str = "正常停止"):
     from utils import now_iso
     from config import SERVER_ALIAS
     msg = f"⚠️ *{service_name}* 已停止 `{SERVER_ALIAS}` {now_iso()}\n原因: {reason}{_sign()}"
-    )
-    msg += "\n\n---\n*自动通知*"
     send_dingtalk(f"⚠️ {service_name} 已停止", msg)
 
 

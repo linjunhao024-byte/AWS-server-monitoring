@@ -178,7 +178,14 @@ if [ -d "$INSTALL_DIR" ]; then
 else
     step_row "${DIM}目录不存在: ${INSTALL_DIR}${NC}"
 fi
+# 清理所有指向 monitor 的快捷命令
 if [ -f "/usr/local/bin/monitor" ]; then
+    for f in /usr/local/bin/*; do
+        if [ -L "$f" ] && [ "$(readlink "$f")" = "/usr/local/bin/monitor" ]; then
+            rm -f "$f"
+            step_row "${GREEN}✓ 已删除快捷命令: $(basename $f)${NC}"
+        fi
+    done
     rm -f /usr/local/bin/monitor
     step_row "${GREEN}✓ 已删除: /usr/local/bin/monitor${NC}"
 fi

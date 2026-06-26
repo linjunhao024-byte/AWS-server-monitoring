@@ -6,6 +6,8 @@ AWS Lightsail 服务器监控系统 v3.0
 终端菜单入口，整合所有功能。
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import re
@@ -24,7 +26,7 @@ from config import (
     INTERFACE, DATA_DIR, INSTALL_DIR,
     DINGTALK_WEBHOOK, DINGTALK_SECRET,
     TG_BOT_TOKEN, TG_CHAT_ID,
-    XFYUN_API_KEY, XFYUN_ENABLED,
+    XFYUN_API_KEY, XFYUN_MODEL, XFYUN_ENABLED,
     WEEKLY_REPORT_DAY, SENDER_NAME, DAILY_REPORT_TIME,
     EMAIL_ENABLED, SMTP_SERVER, SMTP_PORT, SMTP_USE_SSL,
     SMTP_USERNAME, SMTP_PASSWORD, EMAIL_RECIPIENTS,
@@ -36,6 +38,7 @@ from config import (
 from utils import (
     now_iso, format_bytes, get_server_ip,
     health_check, rotate_logs, check_disk_alert, check_version, do_update,
+    is_running,
 )
 
 
@@ -1455,11 +1458,6 @@ def _handle_tg_callback(callback_data: str, query_id: str) -> tuple[str, list]:
     return "❓ 未知操作", _tg_main_keyboard()
 
 
-def _tg_result(text: str, keyboard: list) -> tuple[str, list]:
-    """给 Telegram 结果加上签名。"""
-    return f"{text}\n\n{SIGNATURE}", keyboard
-
-
 def _get_last_logs(service: str, lines: int = 15) -> str:
     """获取服务最近日志。"""
     try:
@@ -1893,7 +1891,7 @@ def main():
         elif choice in actions:
             actions[choice]()
         else:
-            print(f"  {c(RED, '无效输入')}"))
+            print(f"  {c(RED, '无效输入')}")
             pause()
 
 
