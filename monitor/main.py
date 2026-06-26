@@ -25,9 +25,13 @@ from config import (
     XFYUN_API_KEY, XFYUN_ENABLED,
     EMAIL_ENABLED, SMTP_USERNAME, EMAIL_RECIPIENTS,
     SERVER_ALIAS, ROUTE_TARGET, ROUTE_INTERVAL,
+    LOG_RETENTION_DAYS, DISK_ALERT_MB, CURRENT_VERSION,
     save_config,
 )
-from utils import now_iso, format_bytes, get_server_ip
+from utils import (
+    now_iso, format_bytes, get_server_ip,
+    health_check, rotate_logs, check_disk_alert, check_version,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -195,36 +199,43 @@ def _mask(s: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 健康自检
+# ---------------------------------------------------------------------------
+
+def run_health_check():
+    """运行健康自检并显示结果。"""
+    step_row(c(BOLD, "  健康自检"))
+    step_sep()
+    results = health_check()
+    all_ok = True
+    for r in results:
+        if r["status"] == "ok":
+            icon = c(GREEN, "✓")
+        elif r["status"] == "warn":
+            icon = c(YELLOW, "⚠")
+            all_ok = False
+        else:
+            icon = c(RED, "✗")
+            all_ok = False
+        step_row(f"  {icon}  {r['component']:<12} {r['message']}")
+    return all_ok
+
+
+# ---------------------------------------------------------------------------
 # 1. 查看监控状态
 # ---------------------------------------------------------------------------
 
 def menu_status():
     """查看监控状态。"""
     clear_screen()
-
-    # 服务状态
     step_frame("📊  监控状态")
-    step_row(c(BOLD, "服务状态"))
-    step_sep()
 
-    services = [
-        ("bandwidth-monitor", "带宽采集"),
-        ("route-monitor", "路由监测"),
-        ("bandwidth-analyzer.timer", "每日分析"),
-    ]
-    for svc, desc in services:
-        status = _systemctl_status(svc)
-        if "active" in status:
-            icon = c(GREEN, "●")
-            st = c(GREEN, status)
-        else:
-            icon = c(RED, "●")
-            st = c(RED, status)
-        step_row(f"  {icon}  {desc:<16} {st}")
+    # 健康自检
+    run_health_check()
 
     # 最新数据文件
     step_sep()
-    step_row(c(BOLD, "最新数据"))
+    step_row(c(BOLD, "  最新数据"))
     step_sep()
 
     from analyzer import find_latest_file, find_files_in_dir
@@ -246,7 +257,7 @@ def menu_status():
 
     # 路由日志
     step_sep()
-    step_row(c(BOLD, "路由监测"))
+    step_row(c(BOLD, "  路由监测"))
     step_sep()
 
     if os.path.exists(DATA_DIR):
@@ -568,6 +579,9 @@ def menu_config():
         "配置讯飞星火 LLM",
         "配置邮件",
         "修改路由监测参数",
+        "发送钉钉测试消息",
+        "清理过期日志",
+        "检查版本更新",
     ]
     idx = ask_choice("选择操作", options)
     if idx == -1:
@@ -631,6 +645,39 @@ def menu_config():
             except ValueError:
                 print(f"  {c(YELLOW, '⚠ 无效数字，保持原值')}")
         print(f"  {c(GREEN, '✓')} 路由配置已更新")
+
+    elif idx == 5:
+        # 发送钉钉测试消息
+        from notifications import send_dingtalk
+        if not DINGTALK_WEBHOOK:
+            print(f"\n  {c(YELLOW, '⚠ 钉钉未配置')}")
+        else:
+            print(f"\n  发送测试消息...")
+            msg = f"### 🔔 钉钉连接测试\n\n- **服务器**: {SERVER_ALIAS}\n- **IP**: {get_server_ip()}\n- **时间**: {now_iso()}\n\n> ✅ 测试成功\n\n---\n*菜单手动测试*"
+            ok = send_dingtalk("🔔 钉钉连接测试", msg)
+            if ok:
+                print(f"  {c(GREEN, '✓')} 测试消息发送成功")
+            else:
+                print(f"  {c(RED, '✗')} 发送失败，请检查配置")
+
+    elif idx == 6:
+        # 清理过期日志
+        print(f"\n  清理 {LOG_RETENTION_DAYS} 天前的日志...")
+        result = rotate_logs()
+        print(f"  {c(GREEN, '✓')} 删除 {result['deleted']} 个文件，保留 {result['kept']} 个，释放 {result['freed_mb']} MB")
+
+    elif idx == 7:
+        # 版本检查
+        print(f"\n  当前版本: {c(GREEN, CURRENT_VERSION)}")
+        print(f"  检查 GitHub...")
+        ver = check_version()
+        if ver["update_available"]:
+            print(f"  {c(YELLOW, '⚠ 发现新版本')} {c(GREEN, ver['latest'])}")
+            print(f"  {c(DIM, '更新: cd /opt/bandwidth_monitor && bash install.sh')}")
+        elif ver["latest"] != "unknown":
+            print(f"  {c(GREEN, '✓ 已是最新版本')}")
+        else:
+            print(f"  {c(YELLOW, '⚠ 无法连接 GitHub')}")
 
     save_config()
     print(f"\n  {c(GREEN, '✓')} 配置已保存到 settings.json")
@@ -713,15 +760,161 @@ def menu_service():
 # 主入口
 # ---------------------------------------------------------------------------
 
+def _is_first_run() -> bool:
+    """检测是否首次运行（配置文件为空或不存在）。"""
+    from config import CONFIG_FILE
+    if not os.path.exists(CONFIG_FILE):
+        return True
+    try:
+        import json
+        with open(CONFIG_FILE, "r") as f:
+            data = json.load(f)
+        # 如果钉钉和邮件都没配置，视为首次
+        if not data.get("DINGTALK_WEBHOOK") and not data.get("EMAIL_ENABLED"):
+            return True
+    except Exception:
+        return True
+    return False
+
+
+def _first_run_wizard():
+    """首次运行引导。"""
+    clear_screen()
+    step_frame("🎉  首次运行引导")
+    step_row()
+    step_row(f"  检测到配置文件为空，进入快速配置。")
+    step_row(f"  也可以跳过，稍后通过菜单 '5. 配置管理' 设置。")
+    step_row()
+    step_end()
+
+    options = ["进入配置向导", "跳过，直接进入菜单"]
+    idx = ask_choice("选择操作", options)
+    if idx == 0:
+        # 复用 install.sh 的配置逻辑
+        print()
+        step_frame("快速配置")
+        import config as cfg
+
+        alias = input(f"\n  服务器别名 [{c(GREEN, 'My-Server')}]: ").strip()
+        if alias:
+            cfg.SERVER_ALIAS = alias
+
+        step_sep()
+        step_row(f"  {c(DIM, '钉钉配置（可选，直接回车跳过）')}")
+        step_sep()
+        webhook = input(f"  Webhook URL: ").strip()
+        if webhook:
+            cfg.DINGTALK_WEBHOOK = webhook
+            secret = input(f"  Secret (SEC开头): ").strip()
+            if secret:
+                cfg.DINGTALK_SECRET = secret
+
+        step_sep()
+        step_row(f"  {c(DIM, '邮件配置（可选，直接回车跳过）')}")
+        step_sep()
+        if input(f"  启用邮件？(y/N): ").strip().lower() == 'y':
+            cfg.EMAIL_ENABLED = True
+            cfg.SMTP_USERNAME = input(f"  SMTP 用户名: ").strip()
+            cfg.SMTP_PASSWORD = input(f"  SMTP 密码: ").strip()
+            recv = input(f"  收件人（逗号分隔）: ").strip()
+            if recv:
+                cfg.EMAIL_RECIPIENTS = [r.strip() for r in recv.split(",")]
+
+        save_config()
+        step_end()
+        print(f"  {c(GREEN, '✓')} 配置已保存")
+
+
 def main():
-    """主循环。"""
+    """主入口，支持 CLI 快捷命令和交互式菜单。"""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="AWS Lightsail 服务器监控系统 v3.0",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+快捷命令:
+  --check       健康自检
+  --analyze     运行积分分析（最新数据）
+  --status      查看监控状态
+  --report      发送钉钉日报
+  --rotate      清理过期日志
+  --version     检查版本更新
+        """,
+    )
+    parser.add_argument("--check", action="store_true", help="健康自检")
+    parser.add_argument("--analyze", action="store_true", help="运行积分分析")
+    parser.add_argument("--status", action="store_true", help="查看监控状态")
+    parser.add_argument("--report", action="store_true", help="发送钉钉日报")
+    parser.add_argument("--rotate", action="store_true", help="清理过期日志")
+    parser.add_argument("--version", action="store_true", help="检查版本更新")
+    args = parser.parse_args()
+
+    # CLI 快捷命令
+    if args.check:
+        print(f"\n{c(CYAN, '═' * W)}")
+        print(f"  {c(BOLD, '健康自检')}")
+        print(f"{c(CYAN, '═' * W)}")
+        results = health_check()
+        for r in results:
+            if r["status"] == "ok":
+                icon = c(GREEN, "✓")
+            elif r["status"] == "warn":
+                icon = c(YELLOW, "⚠")
+            else:
+                icon = c(RED, "✗")
+            print(f"  {icon}  {r['component']:<12} {r['message']}")
+        print()
+        return
+
+    if args.analyze:
+        menu_analyzer()
+        return
+
+    if args.status:
+        menu_status()
+        return
+
+    if args.report:
+        menu_reporter()
+        return
+
+    if args.rotate:
+        result = rotate_logs()
+        print(f"  删除 {result['deleted']} 个文件，保留 {result['kept']} 个，释放 {result['freed_mb']} MB")
+        return
+
+    if args.version:
+        print(f"  当前版本: {c(GREEN, CURRENT_VERSION)}")
+        ver = check_version()
+        if ver["update_available"]:
+            print(f"  {c(YELLOW, '⚠ 发现新版本')} {c(GREEN, ver['latest'])}")
+        elif ver["latest"] != "unknown":
+            print(f"  {c(GREEN, '✓ 已是最新版本')}")
+        else:
+            print(f"  {c(YELLOW, '⚠ 无法连接 GitHub')}")
+        return
+
+    # 首次运行引导
+    if _is_first_run():
+        _first_run_wizard()
+
+    # 交互式菜单
     while True:
         clear_screen()
 
-        # 主标题
-        main_frame("AWS Lightsail 服务器监控系统 v3.0")
+        # 磁盘告警检查
+        alert = check_disk_alert()
+        if alert:
+            main_frame("AWS Lightsail 服务器监控系统 v3.0")
+            main_row(f"  {c(RED, '⚠ 磁盘告警')}: 数据目录 {alert['total_mb']} MB / {alert['files']} 个文件")
+            main_sep()
+        else:
+            main_frame("AWS Lightsail 服务器监控系统 v3.0")
+
         main_row(f"服务器: {c(GREEN, SERVER_ALIAS)}")
         main_row(f"IP:     {c(GREEN, get_server_ip())}")
+        main_row(f"版本:   {c(DIM, CURRENT_VERSION)}")
         main_sep()
         main_row(f"  {c(YELLOW, '1')}. 📊  查看监控状态")
         main_row(f"  {c(YELLOW, '2')}. 🔍  带宽积分分析")

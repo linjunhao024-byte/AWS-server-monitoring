@@ -371,3 +371,31 @@ if __name__ == "__main__":
             # 服务停止通知
             notify_service_stop(_sys.argv[2])
             _sys.exit(0)
+
+        elif _sys.argv[1] == "--maintenance":
+            # 每日维护：日志轮转 + 磁盘告警
+            from utils import rotate_logs, check_disk_alert, now_iso
+            from config import LOG_RETENTION_DAYS, SERVER_ALIAS
+
+            # 日志轮转
+            result = rotate_logs()
+            if result["deleted"] > 0:
+                print(f"[{now_iso()}] 日志轮转: 删除 {result['deleted']} 个文件，释放 {result['freed_mb']} MB")
+
+            # 磁盘告警
+            alert = check_disk_alert()
+            if alert:
+                msg = (
+                    f"### ⚠️ 磁盘空间告警\n\n"
+                    f"- **服务器**: {SERVER_ALIAS}\n"
+                    f"- **时间**: {now_iso()}\n"
+                    f"- **数据目录大小**: {alert['total_mb']} MB\n"
+                    f"- **文件数量**: {alert['files']}\n"
+                    f"- **告警阈值**: {alert['threshold_mb']} MB\n\n"
+                    f"> 建议清理过期日志或扩容磁盘\n\n"
+                    f"---\n*每日维护自动检测*"
+                )
+                send_dingtalk("⚠️ 磁盘空间告警", msg)
+                print(f"[{now_iso()}] 磁盘告警: {alert['total_mb']} MB 超过阈值 {alert['threshold_mb']} MB")
+
+            _sys.exit(0)

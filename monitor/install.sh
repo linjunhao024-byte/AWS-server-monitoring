@@ -394,6 +394,38 @@ install_systemd() {
         step_row "  ${GREEN}✓${NC} route-monitor" || \
         step_row "  ${YELLOW}⚠${NC} route-monitor 启用失败"
 
+    # 日志轮转 + 磁盘告警定时器（每天 04:00 执行）
+    step_sep
+    step_row "配置日志轮转定时器..."
+    cat > /etc/systemd/system/bandwidth-maintenance.service << MSVCEOF
+[Unit]
+Description=Daily log rotation and disk alert
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 ${CFG_INSTALL_DIR}/notifications.py --maintenance
+StandardOutput=journal
+StandardError=journal
+MSVCEOF
+
+    cat > /etc/systemd/system/bandwidth-maintenance.timer << MTMREOF
+[Unit]
+Description=Run maintenance daily at 04:00
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+MTMREOF
+
+    systemctl daemon-reload
+    systemctl enable bandwidth-maintenance.timer 2>/dev/null && \
+        step_row "  ${GREEN}✓${NC} 日志轮转定时器 (每天 04:00)" || \
+        step_row "  ${YELLOW}⚠${NC} 日志轮转定时器启用失败"
+
     step_bottom
 }
 
