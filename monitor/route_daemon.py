@@ -84,6 +84,11 @@ def run_monitor(target: str, interval: int, output_dir: str):
 
     prev_hops = None
     change_count = 0
+    last_alert_time = 0        # 上次告警时间戳（冷却用）
+    pending_change = None       # 待确认的变化
+    ALERT_COOLDOWN = 1800       # 告警冷却 30 分钟
+    CONFIRM_COUNT = 2           # 连续 N 次检测确认变化才告警
+    confirm_counter = 0         # 连续确认计数
 
     while is_running():
         print(f"[{now_iso()}] 正在 traceroute {target} ...")
@@ -92,15 +97,34 @@ def run_monitor(target: str, interval: int, output_dir: str):
         if prev_hops is not None:
             diff = compare_routes(prev_hops, hops)
             if diff["changed"]:
-                change_count += 1
-                print(f"[{now_iso()}] ⚠️  路由变化! 变化位置: {diff['change_hop']}")
-                log_route(output_dir, target, hops, diff)
-                if ROUTE_ALERT_ENABLED:
-                    alert = build_route_alert(target, diff, hops)
-                    send_dingtalk("⚠️ 路由变化告警", alert)
-                else:
-                    print(f"[{now_iso()}] 路由告警已关闭，未推送钉钉")
+                confirm_counter += 1
+                print(f"[{now_iso()}] ⚠️  路由变化 (确认 {confirm_counter}/{CONFIRM_COUNT}) | {diff['change_hop']}")
+
+                # 首次检测到变化，记录待确认
+                if pending_change is None:
+                    pending_change = diff
+                    pending_change["first_seen"] = now_iso()
+
+                # 连续确认够了，且冷却时间已过
+                now_ts = time.time()
+                if confirm_counter >= CONFIRM_COUNT and (now_ts - last_alert_time) > ALERT_COOLDOWN:
+                    change_count += 1
+                    log_route(output_dir, target, hops, pending_change)
+                    if ROUTE_ALERT_ENABLED:
+                        alert = build_route_alert(target, pending_change, hops)
+                        send_dingtalk("⚠️ 路由变化告警", alert)
+                        print(f"[{now_iso()}] 📤 告警已发送 (累计 {change_count} 次)")
+                    else:
+                        print(f"[{now_iso()}] 路由告警已关闭，未推送钉钉")
+                    last_alert_time = now_ts
+                    pending_change = None
+                    confirm_counter = 0
             else:
+                # 路径稳定，重置确认计数
+                if confirm_counter > 0:
+                    print(f"[{now_iso()}] ✅ 路径恢复稳定 (之前的疑似变化已取消)")
+                confirm_counter = 0
+                pending_change = None
                 log_route(output_dir, target, hops, None)
                 print(f"[{now_iso()}] ✅ 路径无变化 (累计变化 {change_count} 次)")
         else:

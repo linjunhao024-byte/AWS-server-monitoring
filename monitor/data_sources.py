@@ -129,34 +129,58 @@ def ping_once(target: str, count: int = None, timeout: int = None) -> tuple[floa
 # Traceroute
 # ---------------------------------------------------------------------------
 
-def run_traceroute(target: str) -> list[str]:
+def run_traceroute(target: str, attempts: int = 3) -> list[str]:
     """
-    执行 traceroute，返回路径节点列表。
-    每个元素格式: "hop_num ip"
+    执行多次 traceroute，取最稳定的路径。
+
+    Args:
+        target: 目标 IP
+        attempts: 执行次数，取出现最多的路径
+
+    Returns:
+        路径节点列表，每个元素格式: "hop_num ip"
     """
-    try:
-        result = subprocess.run(
-            ["traceroute", "-n", "-m", "15", "-w", "2", "-q", "1", target],
-            capture_output=True, text=True, timeout=60,
-        )
-        hops = []
-        for line in result.stdout.strip().split("\n")[1:]:  # 跳过标题行
-            parts = line.split()
-            if len(parts) >= 2:
-                hop_num = parts[0]
-                ip = parts[1]
-                if ip != "*":
-                    hops.append(f"{hop_num} {ip}")
-        return hops
-    except (subprocess.TimeoutExpired, Exception) as exc:
-        print(f"[WARN] traceroute 失败: {exc}", file=sys.stderr)
+    all_paths = []
+    for _ in range(attempts):
+        try:
+            result = subprocess.run(
+                ["traceroute", "-n", "-m", "15", "-w", "2", "-q", "1", target],
+                capture_output=True, text=True, timeout=60,
+            )
+            hops = []
+            for line in result.stdout.strip().split("\n")[1:]:
+                parts = line.split()
+                if len(parts) >= 2:
+                    hop_num = parts[0]
+                    ip = parts[1]
+                    if ip != "*":
+                        hops.append(f"{hop_num} {ip}")
+            if hops:
+                all_paths.append(tuple(hops))
+        except (subprocess.TimeoutExpired, Exception):
+            pass
+
+    if not all_paths:
         return []
+
+    # 取出现次数最多的路径
+    from collections import Counter
+    counter = Counter(all_paths)
+    most_common = counter.most_common(1)[0][0]
+    return list(most_common)
 
 
 def compare_routes(old: list[str], new: list[str]) -> dict:
-    """比较两次路由路径，返回变化详情。"""
-    old_set = set(old)
-    new_set = set(new)
+    """
+    比较两次路由路径，返回变化详情。
+    只比较 IP 地址，忽略 hop 编号差异。
+    """
+    # 提取纯 IP 列表（忽略 hop 编号）
+    old_ips = [h.split()[1] if " " in h else h for h in old]
+    new_ips = [h.split()[1] if " " in h else h for h in new]
+
+    old_set = set(old_ips)
+    new_set = set(new_ips)
 
     added = new_set - old_set
     removed = old_set - new_set
@@ -166,11 +190,11 @@ def compare_routes(old: list[str], new: list[str]) -> dict:
 
     # 找出变化发生在哪一跳
     change_hop = "unknown"
-    max_len = max(len(old), len(new))
+    max_len = max(len(old_ips), len(new_ips))
     for i in range(max_len):
-        old_hop = old[i] if i < len(old) else "*"
-        new_hop = new[i] if i < len(new) else "*"
-        if old_hop != new_hop:
+        old_ip = old_ips[i] if i < len(old_ips) else "*"
+        new_ip = new_ips[i] if i < len(new_ips) else "*"
+        if old_ip != new_ip:
             change_hop = f"hop {i + 1}"
             break
 
