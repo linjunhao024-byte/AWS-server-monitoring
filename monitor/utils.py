@@ -419,8 +419,13 @@ def do_update() -> dict:
         except Exception:
             pass
 
-    # 5. 重启服务
-    services = ["bandwidth-monitor.service", "route-monitor.service"]
+    # 5. 重启所有服务
+    services = [
+        "bandwidth-monitor.service",
+        "route-monitor.service",
+        "bandwidth-analyzer.timer",
+        "bandwidth-maintenance.timer",
+    ]
     restarted = []
     for svc in services:
         try:

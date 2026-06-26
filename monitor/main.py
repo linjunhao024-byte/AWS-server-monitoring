@@ -650,7 +650,7 @@ def action_update():
     step_end()
 
     if result["success"]:
-        print(f"\n  {c(YELLOW, '按回车重启菜单以加载新版本...')}")
+        print(f"\n  {c(YELLOW, '按回车将重启服务并重新进入面板')}")
         input()
         os.execv(sys.executable, [sys.executable] + sys.argv)
     pause()
