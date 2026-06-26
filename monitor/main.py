@@ -362,7 +362,8 @@ def action_manual_push():
             print(f"\n  {c(YELLOW, '钉钉未配置')}")
             pause()
             return
-        msg = f"### 钉钉连接测试\n\n- **服务器**: {SERVER_ALIAS}\n- **IP**: {get_server_ip()}\n- **时间**: {now_iso()}\n\n> 测试成功\n\n---\n*菜单手动测试*"
+        from notifications import _server_info_block
+        msg = f"### 钉钉连接测试\n\n{_server_info_block()}\n- **时间**: {now_iso()}\n\n> 测试成功\n\n---\n*菜单手动测试*"
         ok = send_dingtalk("钉钉连接测试", msg)
         print(f"\n  {c(GREEN, '✓') if ok else c(RED, '✗')} {'发送成功' if ok else '发送失败'}")
 

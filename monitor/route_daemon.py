@@ -52,9 +52,11 @@ def log_route(output_dir: str, target: str, hops: list[str],
 
 def build_route_alert(target: str, change_info: dict, hops: list[str]) -> str:
     """构建路由变化的钉钉告警消息。"""
+    from notifications import _server_info_block
     path_str = " → ".join(hops[:5]) if hops else "超时"
     return (
         f"### ⚠️ 路由变化告警\n\n"
+        f"{_server_info_block()}\n"
         f"- **目标**: {target}\n"
         f"- **时间**: {now_iso()}\n"
         f"- **变化位置**: {change_info['change_hop']}\n"

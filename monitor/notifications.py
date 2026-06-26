@@ -228,13 +228,70 @@ def call_xfyun(prompt: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# IP 信息获取（用于通知模板）
+# ---------------------------------------------------------------------------
+
+_cached_ip_info = None
+
+def _get_ip_info() -> dict:
+    """获取 IP 信息（带缓存，一次会话只查一次）。"""
+    global _cached_ip_info
+    if _cached_ip_info is not None:
+        return _cached_ip_info
+
+    import urllib.request
+    info = {"ip": "未知", "country": "", "city": "", "isp": "", "hosting": False}
+
+    try:
+        req = urllib.request.Request(
+            "http://ip-api.com/json/?fields=query,country,city,isp,hosting",
+            headers={"User-Agent": "AWS-Monitor"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("status") == "success":
+                info["ip"] = data.get("query", "未知")
+                info["country"] = data.get("country", "")
+                info["city"] = data.get("city", "")
+                info["isp"] = data.get("isp", "")
+                info["hosting"] = data.get("hosting", False)
+    except Exception:
+        pass
+
+    _cached_ip_info = info
+    return info
+
+
+def _server_info_block() -> str:
+    """生成服务器信息块（用于通知模板）。"""
+    from config import SERVER_ALIAS, INTERFACE
+    ip_info = _get_ip_info()
+    ip = ip_info["ip"]
+    loc = f"{ip_info['country']} {ip_info['city']}".strip()
+    isp = ip_info["isp"]
+    ip_type = "云服务器" if ip_info["hosting"] else "住宅IP"
+    return (
+        f"- **服务器**: {SERVER_ALIAS}\n"
+        f"- **IP**: {ip} ({loc})\n"
+        f"- **ISP**: {isp}\n"
+        f"- **类型**: {ip_type}\n"
+        f"- **网卡**: {INTERFACE}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 预定义通知模板
 # ---------------------------------------------------------------------------
 
 def notify_service_start(service_name: str, detail: str = ""):
     """服务启动通知。"""
     from utils import now_iso
-    msg = f"### ✅ 服务启动\n\n- **服务**: {service_name}\n- **时间**: {now_iso()}"
+    msg = (
+        f"### ✅ 服务启动\n\n"
+        f"{_server_info_block()}\n"
+        f"- **服务**: {service_name}\n"
+        f"- **时间**: {now_iso()}"
+    )
     if detail:
         msg += f"\n- **详情**: {detail}"
     msg += "\n\n---\n*自动通知*"
@@ -244,7 +301,13 @@ def notify_service_start(service_name: str, detail: str = ""):
 def notify_service_stop(service_name: str, reason: str = "正常停止"):
     """服务停止通知。"""
     from utils import now_iso
-    msg = f"### ⚠️ 服务停止\n\n- **服务**: {service_name}\n- **时间**: {now_iso()}\n- **原因**: {reason}"
+    msg = (
+        f"### ⚠️ 服务停止\n\n"
+        f"{_server_info_block()}\n"
+        f"- **服务**: {service_name}\n"
+        f"- **时间**: {now_iso()}\n"
+        f"- **原因**: {reason}"
+    )
     msg += "\n\n---\n*自动通知*"
     send_dingtalk(f"⚠️ {service_name} 已停止", msg)
 
@@ -265,7 +328,7 @@ def notify_data_summary():
     if not files:
         msg = (
             f"### ⚠️ 数据验证\n\n"
-            f"- **服务器**: {SERVER_ALIAS}\n"
+            f"{_server_info_block()}\n"
             f"- **时间**: {ts}\n"
             f"- **状态**: 未找到数据文件\n\n"
             f"> 请检查 bandwidth-monitor 服务是否正常运行\n\n"
@@ -300,7 +363,7 @@ def notify_data_summary():
 
     msg = (
         f"### 📊 数据采集验证\n\n"
-        f"- **服务器**: {SERVER_ALIAS}\n"
+        f"{_server_info_block()}\n"
         f"- **时间**: {ts}\n"
         f"- **文件**: `{os.path.basename(latest)}`\n"
         f"- **大小**: {format_bytes(size)}\n"
@@ -345,12 +408,10 @@ if __name__ == "__main__":
     if len(_sys.argv) > 1:
         if _sys.argv[1] == "--test":
             # 安装后测试消息
-            from utils import now_iso, get_server_ip
-            from config import SERVER_ALIAS
+            from utils import now_iso
             msg = (
                 f"### 🔔 钉钉连接测试\n\n"
-                f"- **服务器**: {SERVER_ALIAS}\n"
-                f"- **IP**: {get_server_ip()}\n"
+                f"{_server_info_block()}\n"
                 f"- **时间**: {now_iso()}\n\n"
                 f"> ✅ 钉钉 Webhook 配置正确，连接成功\n\n"
                 f"---\n*安装向导自动发送*"
@@ -388,12 +449,11 @@ if __name__ == "__main__":
             if alert:
                 msg = (
                     f"### ⚠️ 磁盘空间告警\n\n"
-                    f"- **服务器**: {SERVER_ALIAS}\n"
+                    f"{_server_info_block()}\n"
                     f"- **时间**: {now_iso()}\n"
-                    f"- **数据目录大小**: {alert['total_mb']} MB\n"
-                    f"- **文件数量**: {alert['files']}\n"
+                    f"- **数据目录**: {alert['total_mb']} MB / {alert['files']} 个文件\n"
                     f"- **告警阈值**: {alert['threshold_mb']} MB\n\n"
-                    f"> 建议清理过期日志或扩容磁盘\n\n"
+                    f"> 建议: 菜单 [9] 编辑配置 → [8] 运维参数 调整阈值，或清理过期日志\n\n"
                     f"---\n*每日维护自动检测*"
                 )
                 send_dingtalk("⚠️ 磁盘空间告警", msg)
