@@ -8,6 +8,7 @@ AWS Lightsail 服务器监控系统 v3.0
 
 import os
 import sys
+import time
 import subprocess
 
 # 确保能找到同目录下的模块
@@ -472,6 +473,7 @@ def action_edit_config():
                 cfg.SERVER_ALIAS = alias
                 save_config()
                 print(f"  {c(GREEN, '✓')} 已保存")
+                time.sleep(0.8)
 
         elif ch == "2":
             clear_screen()
@@ -489,6 +491,7 @@ def action_edit_config():
                 cfg.INTERFACE = iface
                 save_config()
                 print(f"  {c(GREEN, '✓')} 已保存")
+                time.sleep(0.8)
 
         elif ch == "3":
             clear_screen()
@@ -500,6 +503,7 @@ def action_edit_config():
                 cfg.ROUTE_TARGET = t
                 save_config()
                 print(f"  {c(GREEN, '✓')} 已保存")
+                time.sleep(0.8)
 
         elif ch == "4":
             clear_screen()
@@ -544,6 +548,7 @@ def action_edit_config():
                 cfg.DINGTALK_SECRET = ""
                 save_config()
                 print(f"  {c(GREEN, '✓')} 已清除")
+                time.sleep(0.8)
 
         elif ch == "6":
             clear_screen()
@@ -559,10 +564,12 @@ def action_edit_config():
                 cfg.EMAIL_ENABLED = True
                 save_config()
                 print(f"  {c(GREEN, '✓')} 已启用")
+                time.sleep(0.8)
             elif sub == "2":
                 cfg.EMAIL_ENABLED = False
                 save_config()
                 print(f"  {c(GREEN, '✓')} 已禁用")
+                time.sleep(0.8)
 
         elif ch == "7":
             clear_screen()
@@ -594,6 +601,7 @@ def action_edit_config():
                 cfg.XFYUN_ENABLED = False
                 save_config()
                 print(f"  {c(GREEN, '✓')} 已禁用")
+                time.sleep(0.8)
 
         elif ch == "8":
             cfg.ROUTE_ALERT_ENABLED = not ROUTE_ALERT_ENABLED
@@ -603,6 +611,7 @@ def action_edit_config():
             step_frame("路由告警")
             step_row(f"  {c(GREEN, '✓')} 路由变化告警 {st}")
             step_end()
+            time.sleep(1)
 
         elif ch == "9":
             clear_screen()
@@ -634,6 +643,7 @@ def action_edit_config():
                 cfg.DINGTALK_SECRET = ""
                 save_config()
                 print(f"  {c(GREEN, '✓')} 已清除")
+                time.sleep(0.8)
 
         elif ch == "10":
             clear_screen()
@@ -667,6 +677,7 @@ def action_edit_config():
                 cfg.SMTP_USE_SSL = ssl != 'n'
                 save_config()
                 print(f"  {c(GREEN, '✓')} 已保存")
+                time.sleep(0.8)
             elif sub == "3":
                 u = input(f"  SMTP 用户名: ").strip()
                 if u:
@@ -717,6 +728,7 @@ def action_edit_config():
                 cfg.XFYUN_ENABLED = False
                 save_config()
                 print(f"  {c(GREEN, '✓')} 已禁用")
+                time.sleep(0.8)
 
         elif ch == "12":
             clear_screen()
