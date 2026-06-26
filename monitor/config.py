@@ -147,8 +147,8 @@ def load_config():
         for key, value in data.items():
             if key in _PERSISTENT_KEYS and key in module_globals:
                 module_globals[key] = value
-        # 自动启用讯飞
-        if module_globals.get("XFYUN_API_KEY"):
+        # 自动启用讯飞（仅当用户未显式禁用时）
+        if module_globals.get("XFYUN_API_KEY") and "XFYUN_ENABLED" not in data:
             module_globals["XFYUN_ENABLED"] = True
     except (json.JSONDecodeError, OSError) as e:
         print(f"[WARN] 加载配置失败: {e}")

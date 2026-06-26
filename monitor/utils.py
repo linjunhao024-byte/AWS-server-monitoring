@@ -330,8 +330,7 @@ def check_version() -> dict:
     result = {"current": CURRENT_VERSION, "latest": "unknown", "update_available": False}
 
     try:
-        import time as _time
-        url = f"https://raw.githubusercontent.com/linjunhao024-byte/AWS-server-monitoring/main/monitor/config.py?t={int(_time.time())}"
+        url = f"https://raw.githubusercontent.com/linjunhao024-byte/AWS-server-monitoring/main/monitor/config.py?t={int(time.time())}"
         req = urllib.request.Request(url, headers={
             "User-Agent": "AWS-Monitor",
             "Cache-Control": "no-cache, no-store, must-revalidate",

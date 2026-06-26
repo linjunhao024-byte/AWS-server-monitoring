@@ -824,6 +824,7 @@ def action_boot_toggle():
         ("bandwidth-monitor.service", "带宽采集"),
         ("route-monitor.service", "路由监测"),
         ("bandwidth-analyzer.timer", "每日分析"),
+        ("bandwidth-daily-report.timer", "每日推送"),
         ("bandwidth-maintenance.timer", "日志轮转"),
     ]
     step_row(c(BOLD, "  当前状态"))
@@ -897,7 +898,7 @@ def action_uninstall():
         pause()
         return
 
-    services = ["bandwidth-monitor", "route-monitor",
+    services = ["bandwidth-monitor.service", "route-monitor.service",
                 "bandwidth-analyzer.service", "bandwidth-analyzer.timer",
                 "bandwidth-daily-report.service", "bandwidth-daily-report.timer",
                 "bandwidth-maintenance.service", "bandwidth-maintenance.timer",
@@ -1135,8 +1136,8 @@ def action_alert_settings():
 
     options = ["切换路由变化告警", "修改每日推送时间"]
     idx = ask_choice("选择操作", options)
+    import config as cfg
     if idx == 0:
-        import config as cfg
         cfg.ROUTE_ALERT_ENABLED = not cfg.ROUTE_ALERT_ENABLED
         save_config()
         st = "已开启" if cfg.ROUTE_ALERT_ENABLED else "已关闭"

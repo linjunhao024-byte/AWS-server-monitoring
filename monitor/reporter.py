@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+import statistics
 from datetime import datetime, timedelta
 
 from config import (
@@ -534,10 +535,10 @@ def _route_changes_today() -> str:
 
 def build_daily_detail_message() -> str:
     """构建详细的每日推送消息。"""
-    from utils import now_iso, get_server_ip
+    from utils import now_iso
     from notifications import _server_info_block
     from stats import basic_stats, percentile, bucket_distribution
-    from config import SERVER_ALIAS, BUCKETS, DISK_ALERT_MB
+    from config import BUCKETS, DISK_ALERT_MB
 
     today = datetime.now()
     week_info = get_iso_week_info()
@@ -548,7 +549,7 @@ def build_daily_detail_message() -> str:
 
     # 基础信息
     msg = f"📊 *每日运维报告*\n\n"
-    msg += f"```\n{SERVER_ALIAS}\n```\n\n"
+    msg += f"{_server_info_block()}\n\n"
 
     # ── 流量统计 ──
     if traffic:

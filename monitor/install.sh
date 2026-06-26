@@ -298,7 +298,6 @@ CMDEOF
         ln -sf /usr/local/bin/monitor "/usr/local/bin/${CFG_SHORTCUT}"
         step_row "  ${GREEN}✓${NC} 快捷键: ${YELLOW}${CFG_SHORTCUT}${NC} → monitor"
     fi
-    fi
 
     step_row "${GREEN}✓ 文件安装完成${NC}"
     step_bottom
