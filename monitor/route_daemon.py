@@ -1,6 +1,6 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
 动态路由监测守护进程
 

@@ -1,6 +1,6 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
 流量报表模块
 
