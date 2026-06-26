@@ -1015,6 +1015,143 @@ def action_ai_analysis():
     pause()
 
 
+def action_ip_check():
+    """[18] IP探测"""
+    clear_screen()
+    step_frame("IP 属性探测")
+    step_row(f"  正在查询...")
+    step_end()
+
+    import urllib.request
+    import json as json_mod
+
+    results = {}
+
+    # API 1: ip-api.com (免费，无需 key)
+    try:
+        req = urllib.request.Request(
+            "http://ip-api.com/json/?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,asname,reverse,mobile,proxy,hosting,query",
+            headers={"User-Agent": "AWS-Monitor"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json_mod.loads(resp.read().decode("utf-8"))
+            if data.get("status") == "success":
+                results["ip"] = data.get("query", "N/A")
+                results["country"] = data.get("country", "N/A")
+                results["countryCode"] = data.get("countryCode", "N/A")
+                results["region"] = data.get("regionName", "N/A")
+                results["city"] = data.get("city", "N/A")
+                results["isp"] = data.get("isp", "N/A")
+                results["org"] = data.get("org", "N/A")
+                results["as"] = data.get("as", "N/A")
+                results["asname"] = data.get("asname", "N/A")
+                results["mobile"] = data.get("mobile", False)
+                results["proxy"] = data.get("proxy", False)
+                results["hosting"] = data.get("hosting", False)
+                results["lat"] = data.get("lat", 0)
+                results["lon"] = data.get("lon", 0)
+                results["timezone"] = data.get("timezone", "N/A")
+    except Exception:
+        pass
+
+    # API 2: ip.sb (备用)
+    if not results.get("ip"):
+        try:
+            req = urllib.request.Request(
+                "https://api.ip.sb/geoip",
+                headers={"User-Agent": "AWS-Monitor"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json_mod.loads(resp.read().decode("utf-8"))
+                results["ip"] = data.get("ip", "N/A")
+                results["country"] = data.get("country", "N/A")
+                results["countryCode"] = data.get("country_code", "N/A")
+                results["region"] = data.get("region", "N/A")
+                results["city"] = data.get("city", "N/A")
+                results["isp"] = data.get("isp", "N/A")
+                results["org"] = data.get("organization", "N/A")
+                results["as"] = data.get("asn", "N/A")
+                results["asname"] = data.get("asn_organization", "N/A")
+                results["hosting"] = data.get("is_cloud", False)
+        except Exception:
+            pass
+
+    # API 3: 纯 IP 获取（兜底）
+    if not results.get("ip"):
+        try:
+            results["ip"] = get_server_ip()
+        except Exception:
+            results["ip"] = "未知"
+
+    # 显示结果
+    clear_screen()
+    step_frame("IP 属性探测结果")
+
+    ip = results.get("ip", "N/A")
+    step_row(f"  {c(BOLD, '基本信息')}")
+    step_sep()
+    step_row(f"  公网 IP:     {c(GREEN, ip)}")
+    step_row(f"  国家:        {c(GREEN, results.get('country', 'N/A'))} ({results.get('countryCode', '')})")
+    step_row(f"  地区:        {results.get('region', 'N/A')}")
+    step_row(f"  城市:        {results.get('city', 'N/A')}")
+    step_row(f"  时区:        {results.get('timezone', 'N/A')}")
+    step_row(f"  坐标:        {results.get('lat', 'N/A')}, {results.get('lon', 'N/A')}")
+
+    step_sep()
+    step_row(f"  {c(BOLD, '网络信息')}")
+    step_sep()
+    step_row(f"  ISP:         {c(GREEN, results.get('isp', 'N/A'))}")
+    step_row(f"  组织:        {results.get('org', 'N/A')}")
+    step_row(f"  AS:          {results.get('as', 'N/A')}")
+    step_row(f"  AS名称:      {results.get('asname', 'N/A')}")
+
+    step_sep()
+    step_row(f"  {c(BOLD, 'IP 属性')}")
+    step_sep()
+
+    # IP 类型判断
+    is_hosting = results.get("hosting", False)
+    is_proxy = results.get("proxy", False)
+    is_mobile = results.get("mobile", False)
+
+    if is_hosting:
+        step_row(f"  IP 类型:     {c(YELLOW, '数据中心/云服务器')}")
+    else:
+        step_row(f"  IP 类型:     {c(GREEN, '住宅/家庭宽带')}")
+
+    if is_proxy:
+        step_row(f"  代理/VPN:    {c(YELLOW, '是')}")
+    else:
+        step_row(f"  代理/VPN:    {c(GREEN, '否')}")
+
+    if is_mobile:
+        step_row(f"  移动网络:    {c(YELLOW, '是')}")
+    else:
+        step_row(f"  移动网络:    {c(GREEN, '否')}")
+
+    # 中国可用性评估
+    step_sep()
+    step_row(f"  {c(BOLD, '中国可用性评估')}")
+    step_sep()
+
+    asname = results.get("asname", "").upper()
+    org = results.get("org", "").upper()
+    is_aws = "AMAZON" in asname or "AMAZON" in org or "AWS" in asname
+
+    if is_hosting and is_aws:
+        step_row(f"  {c(YELLOW, '⚠ 检测到 AWS 云服务器 IP')}")
+        step_row(f"  {c(DIM, '  云服务器 IP 在部分国内服务中可能受限')}")
+        step_row(f"  {c(DIM, '  建议: 使用代理或中转方案优化连接')}")
+    elif is_hosting:
+        step_row(f"  {c(YELLOW, '⚠ 检测到数据中心 IP')}")
+        step_row(f"  {c(DIM, '  可能被部分国内服务识别为机房 IP')}")
+    else:
+        step_row(f"  {c(GREEN, '✓ 住宅 IP，国内可用性较好')}")
+
+    step_end()
+    pause()
+
+
 # ---------------------------------------------------------------------------
 # 主菜单
 # ---------------------------------------------------------------------------
@@ -1148,13 +1285,14 @@ def main():
         print(_3col_row(f"  {c(YELLOW, '[9]')}  编辑配置", f"  {c(YELLOW, '[10]')} 开机自启", f"  {c(YELLOW, '[11]')} 网卡与下载"))
         print(_3col_row(f"  {c(YELLOW, '[12]')} 卸载", f"  {c(YELLOW, '[13]')} 一键更新", f"  {c(YELLOW, '[14]')} 自动面板"))
         print(_3col_row(f"  {c(YELLOW, '[15]')} 流量与带宽", f"  {c(YELLOW, '[16]')} 告警设置", f"  {c(YELLOW, '[17]')} AI分析:{ai_st}"))
+        print(_full_row(f"  {c(YELLOW, '[18]')}  IP探测"))
 
         print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
         print(_full_row(f"  {c(DIM, '[0]')}  {c(DIM, '退出')}"))
         print(f"  {_cyan('+')}{_hline('=')}{_cyan('+')}")
 
         try:
-            choice = input(f"\n  {c(YELLOW, '请选择')} [0-17 | q退出 r刷新]: ").strip().lower()
+            choice = input(f"\n  {c(YELLOW, '请选择')} [0-18 | q退出 r刷新]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             break
 
@@ -1183,6 +1321,7 @@ def main():
             "15": action_traffic,
             "16": action_alert_settings,
             "17": action_ai_analysis,
+            "18": action_ip_check,
         }
 
         if choice == "0":
