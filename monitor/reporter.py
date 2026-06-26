@@ -538,6 +538,7 @@ def build_daily_detail_message() -> str:
     """构建精简的每日钉钉推送消息。"""
     from utils import now_iso
     from config import SERVER_ALIAS, DISK_ALERT_MB
+    from notifications import _get_ip_info
     from stats import percentile
 
     today = datetime.now()
@@ -546,8 +547,16 @@ def build_daily_detail_message() -> str:
     traffic = get_traffic_data()
     csv_rows = _read_today_csv()
 
+    # IP 信息
+    ip_info = _get_ip_info()
+    ip_str = ip_info.get("ip", "未知")
+    loc_str = f"{ip_info.get('country', '')} {ip_info.get('city', '')}".strip()
+    isp_str = ip_info.get("isp", "")
+    ip_type = "云服务器" if ip_info.get("hosting") else "住宅IP"
+
     weekday = ['周一','周二','周三','周四','周五','周六','周日'][today.weekday()]
-    msg = f"📊 *{SERVER_ALIAS} 每日报告* {today.strftime('%m-%d')} {weekday}\n\n"
+    msg = f"📊 *{SERVER_ALIAS}* {today.strftime('%m-%d')} {weekday}\n"
+    msg += f"IP: `{ip_str}` ({loc_str}) | {isp_str} | {ip_type}\n\n"
 
     # ── 流量 ──
     if traffic:
