@@ -17,30 +17,30 @@ import json
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
 # ---------------------------------------------------------------------------
-# 钉钉配置
+# 钉钉配置（默认为空，通过安装向导或菜单配置）
 # ---------------------------------------------------------------------------
-DINGTALK_WEBHOOK = "https://oapi.dingtalk.com/robot/send?access_token=6c371dc19e47f319efd8ba9ab8c468e8b5f0c15cb0e4d1842a6a70225c4d471d"
-DINGTALK_SECRET = "SECf1540f559390c9c251905b5856bc19ef9b8cd79167d9d1c047239fdcf164d6c5"
+DINGTALK_WEBHOOK = ""
+DINGTALK_SECRET = ""
 
 # ---------------------------------------------------------------------------
-# 讯飞星火大模型配置
+# 讯飞星火大模型配置（默认为空，通过安装向导或菜单配置）
 # ---------------------------------------------------------------------------
 XFYUN_API_URL = "https://spark-api-open.xf-yun.com/v1/chat/completions"
-XFYUN_API_KEY = "hJgybzduCEbZmZjOagkH:bGvborVEQXrDLUUHFqlX"
+XFYUN_API_KEY = ""
 XFYUN_MODEL = "4.0Ultra"
-XFYUN_ENABLED = True
+XFYUN_ENABLED = False
 
 # ---------------------------------------------------------------------------
-# 邮件配置
+# 邮件配置（默认为空，通过安装向导或菜单配置）
 # ---------------------------------------------------------------------------
-EMAIL_ENABLED = True
+EMAIL_ENABLED = False
 SMTP_SERVER = "smtp.exmail.qq.com"
 SMTP_PORT = 465
 SMTP_USE_SSL = True
-SMTP_USERNAME = "linjunhao@ljh2077.com"
-SMTP_PASSWORD = "DNimUXfQyFq5iH4Q"
+SMTP_USERNAME = ""
+SMTP_PASSWORD = ""
 SENDER_NAME = "服务器监控"
-EMAIL_RECIPIENTS = ["admin@ljh2077.com"]
+EMAIL_RECIPIENTS = []
 WEEKLY_REPORT_DAY = 6  # 周几发周报（0=周一，6=周日）
 
 # ---------------------------------------------------------------------------
