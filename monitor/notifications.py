@@ -489,29 +489,20 @@ def _server_info_block() -> str:
 # ---------------------------------------------------------------------------
 
 def notify_service_start(service_name: str, detail: str = ""):
-    """服务启动通知。"""
+    """服务启动通知（精简版）。"""
     from utils import now_iso
-    msg = (
-        f"### ✅ 服务启动\n\n"
-        f"{_server_info_block()}\n"
-        f"- **服务**: {service_name}\n"
-        f"- **时间**: {now_iso()}"
-    )
+    from config import SERVER_ALIAS
+    msg = f"✅ *{service_name}* 已启动 `{SERVER_ALIAS}` {now_iso()}"
     if detail:
-        msg += f"\n- **详情**: {detail}"
-    msg += "\n\n---\n*自动通知*"
-    send_dingtalk(f"✅ {service_name} 已启动", msg)
+        msg += f"\n{detail}"
+    send_dingtalk(f"✅ {service_name}", msg)
 
 
 def notify_service_stop(service_name: str, reason: str = "正常停止"):
-    """服务停止通知。"""
+    """服务停止通知（精简版）。"""
     from utils import now_iso
-    msg = (
-        f"### ⚠️ 服务停止\n\n"
-        f"{_server_info_block()}\n"
-        f"- **服务**: {service_name}\n"
-        f"- **时间**: {now_iso()}\n"
-        f"- **原因**: {reason}"
+    from config import SERVER_ALIAS
+    msg = f"⚠️ *{service_name}* 已停止 `{SERVER_ALIAS}` {now_iso()}\n原因: {reason}"
     )
     msg += "\n\n---\n*自动通知*"
     send_dingtalk(f"⚠️ {service_name} 已停止", msg)
@@ -667,12 +658,11 @@ if __name__ == "__main__":
             _sys.exit(0)
 
         elif _sys.argv[1] == "--daily-report":
-            # 每日详细报告（钉钉 + Telegram）
+            # 每日报告（仅钉钉，Telegram 通过内联键盘按需查看）
             from reporter import build_daily_detail_message
             from config import SERVER_ALIAS
 
             msg = build_daily_detail_message()
             send_dingtalk(f"📊 {SERVER_ALIAS} 每日报告", msg)
-            send_telegram(msg)
             print(f"[{now_iso()}] 每日报告已推送")
             _sys.exit(0)

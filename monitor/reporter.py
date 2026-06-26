@@ -535,119 +535,46 @@ def _route_changes_today() -> str:
 
 
 def build_daily_detail_message() -> str:
-    """构建详细的每日推送消息。"""
+    """构建精简的每日钉钉推送消息。"""
     from utils import now_iso
-    from notifications import _server_info_block
-    from stats import basic_stats, percentile, bucket_distribution
-    from config import BUCKETS, DISK_ALERT_MB
+    from config import SERVER_ALIAS, DISK_ALERT_MB
+    from stats import percentile
 
     today = datetime.now()
     week_info = get_iso_week_info()
 
-    # 流量数据
     traffic = get_traffic_data()
     csv_rows = _read_today_csv()
 
-    # 基础信息
-    msg = f"📊 *每日运维报告*\n\n"
-    msg += f"{_server_info_block()}\n\n"
+    weekday = ['周一','周二','周三','周四','周五','周六','周日'][today.weekday()]
+    msg = f"📊 *{SERVER_ALIAS} 每日报告* {today.strftime('%m-%d')} {weekday}\n\n"
 
-    # ── 流量统计 ──
+    # ── 流量 ──
     if traffic:
-        today_rx_growth = calculate_growth_rate(traffic.today_rx, traffic.yesterday_rx)
-        today_tx_growth = calculate_growth_rate(traffic.today_tx, traffic.yesterday_tx)
-        today_total_growth = calculate_growth_rate(
+        total_growth = calculate_growth_rate(
             traffic.today_rx + traffic.today_tx,
             traffic.yesterday_rx + traffic.yesterday_tx,
         )
-        weekly_rx_growth = calculate_growth_rate(traffic.weekly_rx, traffic.last_week_rx)
-        weekly_total_growth = calculate_growth_rate(
-            traffic.weekly_total, traffic.last_week_rx + traffic.last_week_tx,
-        )
+        msg += f"今日: `{format_bytes(traffic.today_total)}` {format_growth_rate(total_growth)} | "
+        msg += f"本周: `{format_bytes(traffic.weekly_total)}`\n"
 
-        msg += f"📈 *今日流量* {today.strftime('%m-%d')} {['周一','周二','周三','周四','周五','周六','周日'][today.weekday()]}\n\n"
-        msg += f"  入站: `{format_bytes(traffic.today_rx)}` {format_growth_rate(today_rx_growth)}\n"
-        msg += f"  出站: `{format_bytes(traffic.today_tx)}` {format_growth_rate(today_tx_growth)}\n"
-        msg += f"  总计: `{format_bytes(traffic.today_total)}` {format_growth_rate(today_total_growth)}\n\n"
-
-        msg += f"📊 *本周累计* 第{week_info['week']}周 ({week_info['week_start_str']}~{week_info['week_end_str']})\n\n"
-        msg += f"  入站: `{format_bytes(traffic.weekly_rx)}` {format_growth_rate(weekly_rx_growth)}\n"
-        msg += f"  出站: `{format_bytes(traffic.weekly_tx)}`\n"
-        msg += f"  总计: `{format_bytes(traffic.weekly_total)}` {format_growth_rate(weekly_total_growth)}\n"
-        msg += f"  完整性: {traffic.days_counted}/7 天\n\n"
-
-    # ── 带宽峰值与分布（从 CSV） ──
+    # ── 峰值 + 积分摘要 ──
     if csv_rows:
         rx_vals = [r["rx_mbps"] for r in csv_rows]
         tx_vals = [r["tx_mbps"] for r in csv_rows]
-        cpu_vals = [r["cpu_load_1m"] for r in csv_rows]
-
         rx_peak = max(rx_vals)
         tx_peak = max(tx_vals)
-        rx_peak_time = csv_rows[rx_vals.index(rx_peak)]["timestamp"].split(" ")[1]
-        tx_peak_time = csv_rows[tx_vals.index(tx_peak)]["timestamp"].split(" ")[1]
+        rx_time = csv_rows[rx_vals.index(rx_peak)]["timestamp"].split(" ")[1]
+        msg += f"峰值: ↓`{rx_peak:.1f}`({rx_time}) ↑`{tx_peak:.1f}` | "
+        msg += f"均值: ↓`{statistics.mean(rx_vals):.2f}` ↑`{statistics.mean(tx_vals):.2f}`\n"
 
-        msg += f"⚡ *带宽峰值*\n\n"
-        msg += f"  下行峰值: `{rx_peak:.2f}` Mbps ({rx_peak_time})\n"
-        msg += f"  上行峰值: `{tx_peak:.2f}` Mbps ({tx_peak_time})\n"
-        msg += f"  下行均值: `{statistics.mean(rx_vals):.2f}` Mbps\n"
-        msg += f"  上行均值: `{statistics.mean(tx_vals):.2f}` Mbps\n\n"
-
-        # 带宽分布
-        dist = bucket_distribution(rx_vals, BUCKETS)
-        msg += f"📉 *下行分布*\n\n"
-        for d in dist:
-            if d["pct"] > 0:
-                bar_len = int(d["pct"] / 5)
-                bar = "█" * bar_len
-                msg += f"  {d['range']:>8} {bar} {d['pct']}%\n"
-        msg += "\n"
-
-        # 延迟统计
+        # 延迟
         rtt_ext = [r["rtt_ext_ms"] for r in csv_rows if r["rtt_ext_ms"] > 0]
-        rtt_gw = [r["rtt_gw_ms"] for r in csv_rows if r["rtt_gw_ms"] > 0]
         if rtt_ext:
-            msg += f"📡 *延迟统计*\n\n"
-            msg += f"  公网 RTT: 均值 `{statistics.mean(rtt_ext):.1f}`ms | P95 `{percentile(rtt_ext, 95):.1f}`ms | 最大 `{max(rtt_ext):.1f}`ms\n"
-            if rtt_gw:
-                msg += f"  内网 RTT: 均值 `{statistics.mean(rtt_gw):.1f}`ms | P95 `{percentile(rtt_gw, 95):.1f}`ms\n"
-            loss_ext = [r["loss_ext_pct"] for r in csv_rows]
-            loss_gw = [r["loss_gw_pct"] for r in csv_rows]
-            msg += f"  公网丢包: `{statistics.mean(loss_ext):.2f}%` | 内网丢包: `{statistics.mean(loss_gw):.2f}%`\n\n"
+            loss_ext = statistics.mean([r["loss_ext_pct"] for r in csv_rows])
+            msg += f"延迟: `{statistics.mean(rtt_ext):.0f}`ms P95 `{percentile(rtt_ext, 95):.0f}`ms | 丢包 `{loss_ext:.1f}%`\n"
 
-        # CPU
-        msg += f"💻 *CPU 负载*\n\n"
-        msg += f"  均值: `{statistics.mean(cpu_vals):.2f}` | 最大: `{max(cpu_vals):.2f}` | P95: `{percentile(cpu_vals, 95):.2f}`\n\n"
-
-    # ── 路由状态 ──
-    route_status = _route_changes_today()
-    msg += f"📡 *路由监测*\n\n"
-    msg += f"  今日: {route_status}\n\n"
-
-    # ── 磁盘状态 ──
-    import os
-    import glob as glob_mod
-    data_dir = "/var/log/bandwidth"
-    total_bytes = 0
-    file_count = 0
-    for fpath in glob_mod.glob(os.path.join(data_dir, "*")):
-        if os.path.isfile(fpath):
-            total_bytes += os.path.getsize(fpath)
-            file_count += 1
-    total_mb = round(total_bytes / (1024 * 1024), 1)
-    disk_warn = " ⚠️" if total_mb > DISK_ALERT_MB else ""
-    msg += f"💾 *磁盘使用*\n\n"
-    msg += f"  数据目录: `{total_mb}` MB / {file_count} 个文件{disk_warn}\n"
-    msg += f"  告警阈值: {DISK_ALERT_MB} MB\n\n"
-
-    # ── 数据采样 ──
-    if csv_rows:
-        msg += f"📋 *数据采样*\n\n"
-        msg += f"  今日采样: `{len(csv_rows):,}` 条\n"
-        msg += f"  首条: {csv_rows[0]['timestamp']}\n"
-        msg += f"  末条: {csv_rows[-1]['timestamp']}\n\n"
-
-    # ── 带宽积分分析 ──
+    # ── 积分摘要 ──
     from analyzer import find_latest_file, load_csv_files, reverse_engineer_credits
     latest = find_latest_file()
     if latest:
@@ -655,39 +582,33 @@ def build_daily_detail_message() -> str:
         if rows and len(rows) >= 60:
             analysis = reverse_engineer_credits(rows)
             ci = analysis["credit_inference"]
-            msg += f"🔍 *积分分析*\n\n"
-            msg += f"  可持续基线: `{analysis['sustainable_rx']}` / `{analysis['sustainable_tx']}` Mbps\n"
-            msg += f"  可突上限: `{analysis['burst_ceiling_rx']}` / `{analysis['burst_ceiling_tx']}` Mbps\n"
-            msg += f"  钳位地板: `{analysis['throttle_floor']}` Mbps\n"
-            msg += f"  突发: {ci['total_burst_count']} 次 | 钳位: {ci['total_throttle_count']} 次\n"
-            msg += f"  模式: {ci['burst_to_throttle_pattern']}\n\n"
+            msg += f"积分: 基线 `{analysis['sustainable_rx']}`/`{analysis['sustainable_tx']}` | "
+            msg += f"突发 {ci['total_burst_count']}次 钳位 {ci['total_throttle_count']}次 | {ci['burst_to_throttle_pattern']}\n"
 
-            # ── AI 深度分析 ──
-            from config import XFYUN_ENABLED
-            if XFYUN_ENABLED:
-                from notifications import call_xfyun
-                from stats import basic_stats
-                rx_vals = [r["rx_mbps"] for r in rows]
-                tx_vals = [r["tx_mbps"] for r in rows]
-                cpu_vals_all = [r["cpu_load_1m"] for r in rows]
-                days = (rows[-1]["timestamp"] - rows[0]["timestamp"]).total_seconds() / 86400
-                from analyzer import build_llm_prompt
-                prompt = build_llm_prompt(
-                    analysis,
-                    basic_stats(rx_vals, "Rx"),
-                    basic_stats(tx_vals, "Tx"),
-                    basic_stats(cpu_vals_all, "CPU"),
-                    days,
-                    len(rows),
-                    rows=rows,
-                )
-                llm_result = call_xfyun(prompt)
-                if llm_result:
-                    # 截取前 300 字符
-                    if len(llm_result) > 300:
-                        llm_result = llm_result[:300] + "..."
-                    msg += f"🤖 *AI 分析*\n\n{llm_result}\n\n"
+    # ── 异常检测 ──
+    alerts = []
+    route_status = _route_changes_today()
+    if "变化" in route_status:
+        alerts.append(f"路由{route_status}")
 
-    msg += f"⏰ {now_iso()}"
+    import os
+    import glob as glob_mod
+    data_dir = "/var/log/bandwidth"
+    total_bytes = sum(
+        os.path.getsize(f) for f in glob_mod.glob(os.path.join(data_dir, "*"))
+        if os.path.isfile(f)
+    )
+    total_mb = round(total_bytes / (1024 * 1024), 1)
+    if total_mb > DISK_ALERT_MB:
+        alerts.append(f"磁盘 {total_mb}MB")
 
+    if csv_rows:
+        rtt_ext = [r["rtt_ext_ms"] for r in csv_rows if r["rtt_ext_ms"] > 0]
+        if rtt_ext and statistics.mean(rtt_ext) > 50:
+            alerts.append(f"延迟偏高 {statistics.mean(rtt_ext):.0f}ms")
+
+    if alerts:
+        msg += f"⚠️ {' | '.join(alerts)}\n"
+
+    msg += f"\n{now_iso()}"
     return msg
