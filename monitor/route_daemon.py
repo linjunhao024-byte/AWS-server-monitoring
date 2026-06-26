@@ -71,6 +71,13 @@ def build_route_alert(target: str, change_info: dict, hops: list[str]) -> str:
 def run_monitor(target: str, interval: int, output_dir: str):
     print(f"[{now_iso()}] 路由监测启动 | 目标={target} | 间隔={interval}秒 | 输出={output_dir}")
 
+    # 钉钉启动通知
+    try:
+        from notifications import notify_service_start
+        notify_service_start("路由监测", f"目标={target} 间隔={interval}s")
+    except Exception:
+        pass
+
     prev_hops = None
     change_count = 0
 
@@ -101,6 +108,13 @@ def run_monitor(target: str, interval: int, output_dir: str):
             time.sleep(1)
 
     print(f"[{now_iso()}] 路由监测已停止。累计检测到 {change_count} 次路由变化。")
+
+    # 钉钉停止通知
+    try:
+        from notifications import notify_service_stop
+        notify_service_stop("路由监测", f"累计检测到 {change_count} 次路由变化")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

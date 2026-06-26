@@ -172,6 +172,13 @@ def run_monitor(interface: str, output_dir: str):
     print(f"[{now_iso()}] Profiling 监控启动 | 网卡={interface} | 采样=1Hz | "
           f"Ping目标={PING_GW},{PING_EXT}(后台{PING_INTERVAL}s) | 输出={output_dir}")
 
+    # 钉钉启动通知
+    try:
+        from notifications import notify_service_start
+        notify_service_start("带宽采集", f"网卡={interface} 采样=1Hz")
+    except Exception:
+        pass
+
     while is_running():
         time.sleep(1.0)
         now_mono = time.monotonic()
@@ -232,6 +239,13 @@ def run_monitor(interface: str, output_dir: str):
 
     writer.close()
     print(f"[{now_iso()}] 监控已停止。")
+
+    # 钉钉停止通知
+    try:
+        from notifications import notify_service_stop
+        notify_service_stop("带宽采集")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

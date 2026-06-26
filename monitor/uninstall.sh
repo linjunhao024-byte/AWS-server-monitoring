@@ -62,6 +62,8 @@ SERVICES=(
     "bandwidth-analyzer.service"
     "bandwidth-analyzer.timer"
     "route-monitor.service"
+    "bandwidth-data-check.service"
+    "bandwidth-data-check.timer"
 )
 
 PURGE=false

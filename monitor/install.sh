@@ -540,6 +540,60 @@ show_completion() {
 }
 
 # ---------------------------------------------------------------------------
+# 钉钉通知
+# ---------------------------------------------------------------------------
+
+send_dingtalk_test() {
+    echo ""
+    step_title "钉钉通知"
+    step_sep
+    step_row "  发送测试消息..."
+
+    # 使用 Python 发送测试消息（复用 notifications.py 的逻辑）
+    python3 "${CFG_INSTALL_DIR}/notifications.py" --test 2>/dev/null
+    if [ $? -eq 0 ]; then
+        step_row "  ${GREEN}✓ 测试消息发送成功${NC}"
+    else
+        step_row "  ${YELLOW}⚠ 测试消息发送失败（不影响安装）${NC}"
+    fi
+
+    # 创建 10 分钟延迟数据消息的 systemd 一次性服务
+    step_row "  调度 10 分钟后数据验证消息..."
+    cat > /etc/systemd/system/bandwidth-data-check.service << SVCEOF
+[Unit]
+Description=Bandwidth Monitor Data Check (one-shot)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 ${CFG_INSTALL_DIR}/notifications.py --data-check
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+    cat > /etc/systemd/system/bandwidth-data-check.timer << TMREOF
+[Unit]
+Description=Run data check 10 minutes after install
+
+[Timer]
+OnActiveSec=10min
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+TMREOF
+
+    systemctl daemon-reload
+    systemctl enable bandwidth-data-check.timer 2>/dev/null
+    systemctl start bandwidth-data-check.timer 2>/dev/null
+    step_row "  ${GREEN}✓ 10 分钟后将发送数据验证消息${NC}"
+    step_bottom
+}
+
+# ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
 
@@ -648,6 +702,11 @@ main() {
     write_config
     install_systemd
     start_services
+
+    # 钉钉通知：测试消息 + 10 分钟后数据消息
+    if [ -n "$CFG_DINGTALK_WEBHOOK" ] && [ -n "$CFG_DINGTALK_SECRET" ]; then
+        send_dingtalk_test
+    fi
 
     # 完成
     show_completion

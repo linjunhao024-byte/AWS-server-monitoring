@@ -224,3 +224,150 @@ def call_xfyun(prompt: str) -> str | None:
     except Exception as exc:
         print(f"[WARN] 讯飞 API 调用失败: {exc}", file=sys.stderr)
         return None
+
+
+# ---------------------------------------------------------------------------
+# 预定义通知模板
+# ---------------------------------------------------------------------------
+
+def notify_service_start(service_name: str, detail: str = ""):
+    """服务启动通知。"""
+    from utils import now_iso
+    msg = f"### ✅ 服务启动\n\n- **服务**: {service_name}\n- **时间**: {now_iso()}"
+    if detail:
+        msg += f"\n- **详情**: {detail}"
+    msg += "\n\n---\n*自动通知*"
+    send_dingtalk(f"✅ {service_name} 已启动", msg)
+
+
+def notify_service_stop(service_name: str, reason: str = "正常停止"):
+    """服务停止通知。"""
+    from utils import now_iso
+    msg = f"### ⚠️ 服务停止\n\n- **服务**: {service_name}\n- **时间**: {now_iso()}\n- **原因**: {reason}"
+    msg += "\n\n---\n*自动通知*"
+    send_dingtalk(f"⚠️ {service_name} 已停止", msg)
+
+
+def notify_data_summary():
+    """发送数据采集验证消息（安装后 10 分钟调用）。"""
+    from utils import now_iso, format_bytes
+    from config import INTERFACE, DATA_DIR, SERVER_ALIAS
+    import os
+    import glob
+
+    ts = now_iso()
+
+    # 检查最新 CSV 文件
+    pattern = os.path.join(DATA_DIR, f"traffic_log_*_{INTERFACE}.csv")
+    files = sorted(glob.glob(pattern))
+
+    if not files:
+        msg = (
+            f"### ⚠️ 数据验证\n\n"
+            f"- **服务器**: {SERVER_ALIAS}\n"
+            f"- **时间**: {ts}\n"
+            f"- **状态**: 未找到数据文件\n\n"
+            f"> 请检查 bandwidth-monitor 服务是否正常运行\n\n"
+            f"---\n*安装后自动验证*"
+        )
+        send_dingtalk("⚠️ 数据验证：未找到数据", msg)
+        return
+
+    latest = files[-1]
+    mtime = os.path.getmtime(latest)
+    size = os.path.getsize(latest)
+
+    # 统计行数
+    line_count = 0
+    try:
+        with open(latest, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.startswith("#"):
+                    line_count += 1
+    except Exception:
+        line_count = -1
+
+    # 读取最后一条数据
+    last_line = ""
+    try:
+        with open(latest, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.startswith("#") and line.strip():
+                    last_line = line.strip()
+    except Exception:
+        pass
+
+    msg = (
+        f"### 📊 数据采集验证\n\n"
+        f"- **服务器**: {SERVER_ALIAS}\n"
+        f"- **时间**: {ts}\n"
+        f"- **文件**: `{os.path.basename(latest)}`\n"
+        f"- **大小**: {format_bytes(size)}\n"
+        f"- **采样数**: {line_count:,} 条\n"
+    )
+
+    if last_line and "," in last_line:
+        parts = last_line.split(",")
+        if len(parts) >= 4:
+            msg += f"- **最新数据**: {parts[0]} | RX={parts[1]} Mbps | TX={parts[2]} Mbps\n"
+
+    msg += (
+        f"\n> ✅ 数据采集正常运行中\n\n"
+        f"---\n*安装后自动验证*"
+    )
+    send_dingtalk("📊 数据采集验证通过", msg)
+
+    # 清理一次性 timer
+    try:
+        import subprocess
+        subprocess.run(["systemctl", "stop", "bandwidth-data-check.timer"],
+                       capture_output=True, timeout=5)
+        subprocess.run(["systemctl", "disable", "bandwidth-data-check.timer"],
+                       capture_output=True, timeout=5)
+        # 删除 service 和 timer 文件
+        for f in ["/etc/systemd/system/bandwidth-data-check.service",
+                  "/etc/systemd/system/bandwidth-data-check.timer"]:
+            if os.path.exists(f):
+                os.remove(f)
+        subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# CLI 入口
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import sys as _sys
+
+    if len(_sys.argv) > 1:
+        if _sys.argv[1] == "--test":
+            # 安装后测试消息
+            from utils import now_iso, get_server_ip
+            from config import SERVER_ALIAS
+            msg = (
+                f"### 🔔 钉钉连接测试\n\n"
+                f"- **服务器**: {SERVER_ALIAS}\n"
+                f"- **IP**: {get_server_ip()}\n"
+                f"- **时间**: {now_iso()}\n\n"
+                f"> ✅ 钉钉 Webhook 配置正确，连接成功\n\n"
+                f"---\n*安装向导自动发送*"
+            )
+            ok = send_dingtalk("🔔 钉钉连接测试", msg)
+            _sys.exit(0 if ok else 1)
+
+        elif _sys.argv[1] == "--data-check":
+            # 10 分钟后数据验证
+            notify_data_summary()
+            _sys.exit(0)
+
+        elif _sys.argv[1] == "--start" and len(_sys.argv) > 2:
+            # 服务启动通知
+            notify_service_start(_sys.argv[2])
+            _sys.exit(0)
+
+        elif _sys.argv[1] == "--stop" and len(_sys.argv) > 2:
+            # 服务停止通知
+            notify_service_stop(_sys.argv[2])
+            _sys.exit(0)
