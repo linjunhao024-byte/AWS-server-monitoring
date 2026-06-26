@@ -317,24 +317,25 @@ def check_disk_alert(data_dir: str = None, threshold_mb: int = None) -> dict | N
 
 def check_version() -> dict:
     """
-    对比 GitHub 最新版本。
+    对比 GitHub 最新版本（通过读取 config.py 中的 CURRENT_VERSION）。
 
     Returns:
         {"current": str, "latest": str, "update_available": bool}
     """
     import urllib.request
-    import json as json_mod
+    import re
     from config import CURRENT_VERSION
 
     result = {"current": CURRENT_VERSION, "latest": "unknown", "update_available": False}
 
     try:
-        url = "https://api.github.com/repos/linjunhao024-byte/AWS-server-monitoring/releases/latest"
+        url = "https://raw.githubusercontent.com/linjunhao024-byte/AWS-server-monitoring/main/monitor/config.py"
         req = urllib.request.Request(url, headers={"User-Agent": "AWS-Monitor"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json_mod.loads(resp.read().decode("utf-8"))
-            latest = data.get("tag_name", "").lstrip("v")
-            if latest:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            content = resp.read().decode("utf-8")
+            match = re.search(r'CURRENT_VERSION\s*=\s*"([^"]+)"', content)
+            if match:
+                latest = match.group(1)
                 result["latest"] = latest
                 if latest != CURRENT_VERSION:
                     result["update_available"] = True

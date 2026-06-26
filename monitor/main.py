@@ -570,7 +570,7 @@ def action_uninstall():
     step_frame("卸载")
     step_row(f"  {c(RED, '此操作将删除所有监控文件和服务')}")
     step_sep()
-    if input(f"  {c(RED, '确认卸载？(y/N)'): ").strip().lower() != 'y':
+    if input(f"  {c(RED, '确认卸载？(y/N)')} ").strip().lower() != 'y':
         print(f"\n  已取消")
         pause()
         return
