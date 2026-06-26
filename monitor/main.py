@@ -8,8 +8,11 @@ AWS Lightsail 服务器监控系统 v3.0
 
 import os
 import sys
+import re
 import time
+import json
 import threading
+import unicodedata
 import subprocess
 
 # 确保能找到同目录下的模块
@@ -66,7 +69,7 @@ def c(color: str, text: str) -> str:
 
 
 def _display_width(s: str) -> int:
-    import unicodedata
+    """计算字符串的终端显示宽度（中文占 2 列）。"""
     width = 0
     for ch in s:
         if unicodedata.east_asian_width(ch) in ('F', 'W'):
@@ -77,7 +80,7 @@ def _display_width(s: str) -> int:
 
 
 def _strip_ansi(s: str) -> str:
-    import re
+    """去除 ANSI 转义序列。"""
     return re.sub(r'\033\[[0-9;]*m', '', s)
 
 
@@ -913,9 +916,18 @@ def action_uninstall():
     subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=5)
 
     import shutil
-    for f in ["/usr/local/bin/monitor"]:
-        if os.path.exists(f):
-            os.remove(f)
+    # 清理所有指向 monitor 的快捷命令
+    bin_dir = "/usr/local/bin"
+    monitor_path = os.path.join(bin_dir, "monitor")
+    for name in os.listdir(bin_dir):
+        path = os.path.join(bin_dir, name)
+        try:
+            if os.path.islink(path) and os.readlink(path) == monitor_path:
+                os.remove(path)
+        except Exception:
+            pass
+    if os.path.exists(monitor_path):
+        os.remove(monitor_path)
     if os.path.exists(INSTALL_DIR):
         shutil.rmtree(INSTALL_DIR)
 
@@ -1485,7 +1497,6 @@ def action_ip_check():
     step_end()
 
     import urllib.request
-    import json as json_mod
 
     results = {}
 
@@ -1496,7 +1507,7 @@ def action_ip_check():
             headers={"User-Agent": "AWS-Monitor"},
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json_mod.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode("utf-8"))
             if data.get("status") == "success":
                 results["ip"] = data.get("query", "N/A")
                 results["country"] = data.get("country", "N/A")
@@ -1524,7 +1535,7 @@ def action_ip_check():
                 headers={"User-Agent": "AWS-Monitor"},
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json_mod.loads(resp.read().decode("utf-8"))
+                data = json.loads(resp.read().decode("utf-8"))
                 results["ip"] = data.get("ip", "N/A")
                 results["country"] = data.get("country", "N/A")
                 results["countryCode"] = data.get("country_code", "N/A")
@@ -1623,7 +1634,6 @@ def _is_first_run() -> bool:
     if not os.path.exists(CONFIG_FILE):
         return True
     try:
-        import json
         with open(CONFIG_FILE, "r") as f:
             data = json.load(f)
         if not data.get("DINGTALK_WEBHOOK") and not data.get("EMAIL_ENABLED"):

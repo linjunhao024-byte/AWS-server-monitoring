@@ -448,6 +448,11 @@ Type=oneshot
 ExecStart=/usr/bin/python3 ${CFG_INSTALL_DIR}/notifications.py --maintenance
 StandardOutput=journal
 StandardError=journal
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/bandwidth
+ProtectHome=yes
+PrivateTmp=yes
 MSVCEOF
 
     cat > /etc/systemd/system/bandwidth-maintenance.timer << MTMREOF
@@ -717,6 +722,11 @@ Type=oneshot
 ExecStart=/usr/bin/python3 ${CFG_INSTALL_DIR}/notifications.py --data-check
 StandardOutput=journal
 StandardError=journal
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadOnlyPaths=/var/log/bandwidth
+ProtectHome=yes
+PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target

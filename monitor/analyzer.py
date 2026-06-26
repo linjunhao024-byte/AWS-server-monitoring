@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from __future__ import annotations
 """
 带宽积分机制分析模块
 
@@ -10,6 +9,8 @@ from __future__ import annotations
 - 报告生成
 - LLM Prompt 构建
 """
+
+from __future__ import annotations
 
 import os
 import sys

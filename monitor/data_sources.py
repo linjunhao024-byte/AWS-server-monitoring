@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from __future__ import annotations
 """
 系统数据读取模块
 
 统一的数据源接口：sysfs 网卡计数器、/proc/loadavg、ping、traceroute、vnstat。
 """
+
+from __future__ import annotations
 
 import os
 import re

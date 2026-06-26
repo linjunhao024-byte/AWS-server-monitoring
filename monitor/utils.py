@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from __future__ import annotations
 """
 通用工具函数模块
 
 从各脚本中提取的纯函数，无外部依赖。
 """
+
+from __future__ import annotations
 
 import os
 import signal

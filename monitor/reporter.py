@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from __future__ import annotations
 """
 流量报表模块
 
@@ -10,6 +9,8 @@ from __future__ import annotations
 - 同比分析
 - 趋势图生成
 """
+
+from __future__ import annotations
 
 import os
 import sys

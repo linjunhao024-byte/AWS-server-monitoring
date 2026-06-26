@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from __future__ import annotations
 """
 动态路由监测守护进程
 
@@ -10,6 +9,8 @@ from __future__ import annotations
 用法：
   sudo python3 route_daemon.py [--target 114.114.114.114] [--interval 300]
 """
+
+from __future__ import annotations
 
 import os
 import sys

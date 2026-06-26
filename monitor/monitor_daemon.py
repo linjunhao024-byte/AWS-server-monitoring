@@ -43,6 +43,7 @@ _ping_lock = threading.Lock()
 def _ping_background():
     """后台 ping 线程：每 PING_INTERVAL 秒更新一次缓存。"""
     while is_running():
+        ping_start = time.monotonic()
         loss_gw, rtt_gw = ping_once(PING_GW)
         loss_ext, rtt_ext = ping_once(PING_EXT)
         with _ping_lock:
@@ -50,7 +51,9 @@ def _ping_background():
             _ping_cache["loss_gw"] = loss_gw
             _ping_cache["rtt_ext"] = rtt_ext
             _ping_cache["loss_ext"] = loss_ext
-        time.sleep(max(0, PING_INTERVAL - 4))
+        # ping 本身耗时 2-4 秒，剩余时间补足到 PING_INTERVAL
+        elapsed_ping = time.monotonic() - ping_start
+        time.sleep(max(1, PING_INTERVAL - elapsed_ping))
 
 
 # ---------------------------------------------------------------------------

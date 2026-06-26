@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from __future__ import annotations
 """
 统一通知层模块
 
 合并 3 份钉钉实现 + 邮件 + LLM 调用。
 钉钉使用 urllib（零依赖），邮件使用 smtplib（标准库）。
 """
+
+from __future__ import annotations
 
 import os
 import sys
@@ -109,7 +110,6 @@ def send_telegram(text: str, parse_mode: str = "Markdown") -> bool:
         return False
 
     try:
-        import urllib.request
         url = f"{TG_API_URL}/bot{TG_BOT_TOKEN}/sendMessage"
         payload = json.dumps({
             "chat_id": TG_CHAT_ID,
@@ -155,7 +155,6 @@ def send_telegram_keyboard(text: str, buttons: list[dict],
         keyboard = [buttons]  # 单行，包成二维
 
     try:
-        import urllib.request
         url = f"{TG_API_URL}/bot{TG_BOT_TOKEN}/sendMessage"
         payload = json.dumps({
             "chat_id": TG_CHAT_ID,
@@ -185,7 +184,6 @@ def answer_callback(callback_query_id: str, text: str = "") -> bool:
     if not TG_BOT_TOKEN:
         return False
     try:
-        import urllib.request
         url = f"{TG_API_URL}/bot{TG_BOT_TOKEN}/answerCallbackQuery"
         payload = json.dumps({
             "callback_query_id": callback_query_id,
@@ -215,7 +213,6 @@ def poll_telegram_updates(offset: int = 0, timeout: int = 30) -> list[dict]:
     if not TG_BOT_TOKEN:
         return []
     try:
-        import urllib.request
         url = f"{TG_API_URL}/bot{TG_BOT_TOKEN}/getUpdates?offset={offset}&timeout={timeout}"
         req = urllib.request.Request(url, headers={"User-Agent": "AWS-Monitor"})
         with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
@@ -448,7 +445,6 @@ def _get_ip_info() -> dict:
     if _cached_ip_info is not None:
         return _cached_ip_info
 
-    import urllib.request
     info = {"ip": "未知", "country": "", "city": "", "isp": "", "hosting": False}
 
     try:
