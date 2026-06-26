@@ -645,6 +645,47 @@ def build_daily_detail_message() -> str:
         msg += f"  首条: {csv_rows[0]['timestamp']}\n"
         msg += f"  末条: {csv_rows[-1]['timestamp']}\n\n"
 
+    # ── 带宽积分分析 ──
+    from analyzer import find_latest_file, load_csv_files, reverse_engineer_credits
+    latest = find_latest_file()
+    if latest:
+        rows = load_csv_files([latest])
+        if rows and len(rows) >= 60:
+            analysis = reverse_engineer_credits(rows)
+            ci = analysis["credit_inference"]
+            msg += f"🔍 *积分分析*\n\n"
+            msg += f"  可持续基线: `{analysis['sustainable_rx']}` / `{analysis['sustainable_tx']}` Mbps\n"
+            msg += f"  可突上限: `{analysis['burst_ceiling_rx']}` / `{analysis['burst_ceiling_tx']}` Mbps\n"
+            msg += f"  钳位地板: `{analysis['throttle_floor']}` Mbps\n"
+            msg += f"  突发: {ci['total_burst_count']} 次 | 钳位: {ci['total_throttle_count']} 次\n"
+            msg += f"  模式: {ci['burst_to_throttle_pattern']}\n\n"
+
+            # ── AI 深度分析 ──
+            from config import XFYUN_ENABLED
+            if XFYUN_ENABLED:
+                from notifications import call_xfyun
+                from stats import basic_stats
+                rx_vals = [r["rx_mbps"] for r in rows]
+                tx_vals = [r["tx_mbps"] for r in rows]
+                cpu_vals_all = [r["cpu_load_1m"] for r in rows]
+                days = (rows[-1]["timestamp"] - rows[0]["timestamp"]).total_seconds() / 86400
+                from analyzer import build_llm_prompt
+                prompt = build_llm_prompt(
+                    analysis,
+                    basic_stats(rx_vals, "Rx"),
+                    basic_stats(tx_vals, "Tx"),
+                    basic_stats(cpu_vals_all, "CPU"),
+                    days,
+                    len(rows),
+                    rows=rows,
+                )
+                llm_result = call_xfyun(prompt)
+                if llm_result:
+                    # 截取前 800 字符（Telegram 消息长度限制）
+                    if len(llm_result) > 800:
+                        llm_result = llm_result[:800] + "..."
+                    msg += f"🤖 *AI 分析*\n\n{llm_result}\n\n"
+
     msg += f"⏰ {now_iso()}"
 
     return msg
