@@ -20,6 +20,14 @@
 
 ---
 
+## ⚡ 一键拉取 | Quick Fetch
+
+```bash
+wget -O AWS-server-monitoring.tar.gz https://github.com/linjunhao024-byte/AWS-server-monitoring/archive/refs/heads/main.tar.gz && tar -xzf AWS-server-monitoring.tar.gz && cd AWS-server-monitoring-main/monitor && sudo bash install.sh
+```
+
+---
+
 ## 📐 系统架构 | System Architecture
 
 ```
