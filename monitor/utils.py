@@ -330,8 +330,13 @@ def check_version() -> dict:
     result = {"current": CURRENT_VERSION, "latest": "unknown", "update_available": False}
 
     try:
-        url = "https://raw.githubusercontent.com/linjunhao024-byte/AWS-server-monitoring/main/monitor/config.py"
-        req = urllib.request.Request(url, headers={"User-Agent": "AWS-Monitor"})
+        import time as _time
+        url = f"https://raw.githubusercontent.com/linjunhao024-byte/AWS-server-monitoring/main/monitor/config.py?t={int(_time.time())}"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "AWS-Monitor",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+        })
         with urllib.request.urlopen(req, timeout=15) as resp:
             content = resp.read().decode("utf-8")
             match = re.search(r'CURRENT_VERSION\s*=\s*"([^"]+)"', content)
@@ -340,8 +345,8 @@ def check_version() -> dict:
                 result["latest"] = latest
                 if latest != CURRENT_VERSION:
                     result["update_available"] = True
-    except Exception:
-        pass
+    except Exception as e:
+        result["error"] = str(e)
 
     return result
 

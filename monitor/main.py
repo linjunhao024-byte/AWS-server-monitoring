@@ -781,6 +781,9 @@ def action_update():
     step_row(f"  检查 GitHub...")
     step_sep()
     ver = check_version()
+    step_row(f"  GitHub 版本: {c(GREEN, ver['latest'])}")
+    if ver.get("error"):
+        step_row(f"  {c(RED, '网络错误: ' + ver['error'])}")
     if not ver["update_available"]:
         step_row(f"  {c(GREEN, '✓ 已是最新版本')}")
         step_end()
