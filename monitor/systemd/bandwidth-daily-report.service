@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily Traffic Report (DingTalk + Telegram)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/bandwidth_monitor/notifications.py --daily-report
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=daily-report
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadOnlyPaths=/var/log/bandwidth
+ProtectHome=yes
+PrivateTmp=yes

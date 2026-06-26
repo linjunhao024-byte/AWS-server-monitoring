@@ -864,6 +864,7 @@ def action_uninstall():
 
     services = ["bandwidth-monitor", "route-monitor",
                 "bandwidth-analyzer.service", "bandwidth-analyzer.timer",
+                "bandwidth-daily-report.service", "bandwidth-daily-report.timer",
                 "bandwidth-maintenance.service", "bandwidth-maintenance.timer",
                 "bandwidth-data-check.service", "bandwidth-data-check.timer"]
     for svc in services:

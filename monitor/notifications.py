@@ -668,3 +668,14 @@ if __name__ == "__main__":
                 print(f"[{now_iso()}] 磁盘告警: {alert['total_mb']} MB 超过阈值 {alert['threshold_mb']} MB")
 
             _sys.exit(0)
+
+        elif _sys.argv[1] == "--daily-report":
+            # 每日详细报告（钉钉 + Telegram）
+            from reporter import build_daily_detail_message
+            from config import SERVER_ALIAS
+
+            msg = build_daily_detail_message()
+            send_dingtalk(f"📊 {SERVER_ALIAS} 每日报告", msg)
+            send_telegram(msg)
+            print(f"[{now_iso()}] 每日报告已推送")
+            _sys.exit(0)

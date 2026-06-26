@@ -394,6 +394,8 @@ install_systemd() {
         "bandwidth-analyzer.service"
         "bandwidth-analyzer.timer"
         "route-monitor.service"
+        "bandwidth-daily-report.service"
+        "bandwidth-daily-report.timer"
     )
 
     for svc in "${services[@]}"; do
@@ -419,6 +421,9 @@ install_systemd() {
     systemctl enable route-monitor.service 2>/dev/null && \
         step_row "  ${GREEN}✓${NC} route-monitor" || \
         step_row "  ${YELLOW}⚠${NC} route-monitor 启用失败"
+    systemctl enable bandwidth-daily-report.timer 2>/dev/null && \
+        step_row "  ${GREEN}✓${NC} 每日报告 (23:00)" || \
+        step_row "  ${YELLOW}⚠${NC} 每日报告启用失败"
 
     # 日志轮转 + 磁盘告警定时器（每天 04:00 执行）
     step_sep
