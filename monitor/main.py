@@ -1190,26 +1190,30 @@ def action_ai_analysis():
 # Telegram 内联键盘回调处理
 # ---------------------------------------------------------------------------
 
-def _handle_tg_callback(callback_data: str, query_id: str) -> str:
+def _handle_tg_callback(callback_data: str, query_id: str) -> tuple[str, list]:
     """
-    处理 Telegram 回调，返回结果文本。
+    处理 Telegram 回调，返回 (结果文本, 键盘)。
     """
-    from notifications import answer_callback, _server_info_block
+    from notifications import (
+        answer_callback, _server_info_block,
+        _tg_main_keyboard, _tg_svc_keyboard, _tg_log_keyboard,
+    )
     answer_callback(query_id, "处理中...")
 
+    # ── 主菜单操作 ──
     if callback_data == "status":
         results = health_check()
         lines = ["📊 *监控状态*\n"]
         for r in results:
             icon = {"ok": "✓", "warn": "⚠", "error": "✗"}.get(r["status"], "?")
             lines.append(f"`{icon}` {r['component']}: {r['message']}")
-        return "\n".join(lines)
+        return "\n".join(lines), _tg_main_keyboard()
 
     elif callback_data == "traffic":
         from reporter import get_traffic_data
         traffic = get_traffic_data()
         if not traffic:
-            return "⚠ 无法获取流量数据"
+            return "⚠ 无法获取流量数据", _tg_main_keyboard()
         return (
             f"📈 *今日流量*\n\n"
             f"入站: `{format_bytes(traffic.today_rx)}`\n"
@@ -1220,7 +1224,7 @@ def _handle_tg_callback(callback_data: str, query_id: str) -> str:
             f"出站: `{format_bytes(traffic.weekly_tx)}`\n"
             f"总计: `{format_bytes(traffic.weekly_total)}`\n"
             f"完整性: {traffic.days_counted}/7 天"
-        )
+        ), _tg_main_keyboard()
 
     elif callback_data == "route":
         if os.path.exists(DATA_DIR):
@@ -1230,20 +1234,20 @@ def _handle_tg_callback(callback_data: str, query_id: str) -> str:
                 try:
                     with open(latest, "r", encoding="utf-8") as f:
                         lines = f.readlines()
-                        last_entries = [l.rstrip() for l in lines[-6:] if l.strip()]
-                        return "📡 *路由状态*\n\n" + "\n".join(last_entries)
+                        last_entries = [l.rstrip() for l in lines[-8:] if l.strip()]
+                        return "📡 *路由状态*\n\n" + "\n".join(last_entries), _tg_main_keyboard()
                 except Exception:
                     pass
-        return "⚠ 未找到路由日志"
+        return "⚠ 未找到路由日志", _tg_main_keyboard()
 
     elif callback_data == "analyze":
         from analyzer import find_latest_file, load_csv_files, reverse_engineer_credits
         latest = find_latest_file()
         if not latest:
-            return "⚠ 未找到数据文件"
+            return "⚠ 未找到数据文件", _tg_main_keyboard()
         rows = load_csv_files([latest])
         if not rows:
-            return "⚠ 没有有效数据"
+            return "⚠ 没有有效数据", _tg_main_keyboard()
         analysis = reverse_engineer_credits(rows)
         ci = analysis["credit_inference"]
         return (
@@ -1254,7 +1258,32 @@ def _handle_tg_callback(callback_data: str, query_id: str) -> str:
             f"突发: {ci['total_burst_count']} 次\n"
             f"钳位: {ci['total_throttle_count']} 次\n"
             f"模式: {ci['burst_to_throttle_pattern']}"
-        )
+        ), _tg_main_keyboard()
+
+    elif callback_data == "ip":
+        from notifications import _get_ip_info
+        info = _get_ip_info()
+        ip_type = "云服务器" if info["hosting"] else "住宅IP"
+        return (
+            f"🌐 *IP 信息*\n\n"
+            f"IP: `{info['ip']}`\n"
+            f"位置: {info['country']} {info['city']}\n"
+            f"ISP: {info['isp']}\n"
+            f"类型: {ip_type}"
+        ), _tg_main_keyboard()
+
+    elif callback_data == "alerts":
+        rt_st = "✓ 开启" if ROUTE_ALERT_ENABLED else "✗ 关闭"
+        em_st = "✓ 启用" if EMAIL_ENABLED else "✗ 禁用"
+        return (
+            f"⚡ *告警状态*\n\n"
+            f"钉钉: {'✓ 配置' if DINGTALK_WEBHOOK else '✗ 未配置'}\n"
+            f"Telegram: {'✓ 配置' if TG_BOT_TOKEN else '✗ 未配置'}\n"
+            f"邮件: {em_st}\n"
+            f"路由告警: {rt_st}\n\n"
+            f"磁盘阈值: {DISK_ALERT_MB} MB\n"
+            f"日志保留: {LOG_RETENTION_DAYS} 天"
+        ), _tg_main_keyboard()
 
     elif callback_data == "config":
         wh_st = "✓" if DINGTALK_WEBHOOK else "✗"
@@ -1268,12 +1297,86 @@ def _handle_tg_callback(callback_data: str, query_id: str) -> str:
             f"服务器: `{SERVER_ALIAS}`\n"
             f"网卡: `{INTERFACE}`\n"
             f"路由: `{ROUTE_TARGET}` ({ROUTE_INTERVAL}s)"
-        )
+        ), _tg_main_keyboard()
 
     elif callback_data == "refresh":
-        return f"🔄 *已刷新*\n\n{_server_info_block()}"
+        return f"🔄 *已刷新*\n\n{_server_info_block()}", _tg_main_keyboard()
 
-    return "❓ 未知操作"
+    # ── 子菜单：服务管理 ──
+    elif callback_data == "svc_menu":
+        return "🛠 *服务管理*\n\n选择操作:", _tg_svc_keyboard()
+
+    elif callback_data == "svc_status":
+        results = health_check()
+        lines = ["📊 *服务状态*\n"]
+        for r in results:
+            if r["component"] in ("带宽采集", "路由监测", "每日分析"):
+                icon = {"ok": "●", "warn": "⚠", "error": "✗"}.get(r["status"], "?")
+                lines.append(f"`{icon}` {r['component']}: {r['message']}")
+        return "\n".join(lines), _tg_svc_keyboard()
+
+    elif callback_data == "svc_start_monitor":
+        subprocess.run(["systemctl", "start", "bandwidth-monitor"], capture_output=True, timeout=10)
+        return "✓ 带宽采集已启动", _tg_svc_keyboard()
+
+    elif callback_data == "svc_stop_monitor":
+        subprocess.run(["systemctl", "stop", "bandwidth-monitor"], capture_output=True, timeout=10)
+        return "✓ 带宽采集已停止", _tg_svc_keyboard()
+
+    elif callback_data == "svc_start_route":
+        subprocess.run(["systemctl", "start", "route-monitor"], capture_output=True, timeout=10)
+        return "✓ 路由监测已启动", _tg_svc_keyboard()
+
+    elif callback_data == "svc_stop_route":
+        subprocess.run(["systemctl", "stop", "route-monitor"], capture_output=True, timeout=10)
+        return "✓ 路由监测已停止", _tg_svc_keyboard()
+
+    elif callback_data == "svc_restart_all":
+        for svc in ["bandwidth-monitor", "route-monitor"]:
+            subprocess.run(["systemctl", "restart", svc], capture_output=True, timeout=10)
+        return "✓ 全部服务已重启", _tg_svc_keyboard()
+
+    # ── 子菜单：日志 ──
+    elif callback_data == "log_menu":
+        return "📋 *查看日志*\n\n选择服务:", _tg_log_keyboard()
+
+    elif callback_data == "log_monitor":
+        return _get_last_logs("bandwidth-monitor"), _tg_log_keyboard()
+
+    elif callback_data == "log_route":
+        return _get_last_logs("route-monitor"), _tg_log_keyboard()
+
+    elif callback_data == "log_analyzer":
+        return _get_last_logs("bandwidth-analyzer"), _tg_log_keyboard()
+
+    elif callback_data == "log_system":
+        return _get_last_logs("bandwidth-maintenance"), _tg_log_keyboard()
+
+    elif callback_data == "clean_logs":
+        from utils import rotate_logs
+        result = rotate_logs()
+        return f"🧹 *日志清理完成*\n\n删除: {result['deleted']} 个\n保留: {result['kept']} 个\n释放: {result['freed_mb']} MB", _tg_log_keyboard()
+
+    # ── 返回主菜单 ──
+    elif callback_data == "back_main":
+        return f"🖥️ *{SERVER_ALIAS}*\n\n{_server_info_block()}", _tg_main_keyboard()
+
+    return "❓ 未知操作", _tg_main_keyboard()
+
+
+def _get_last_logs(service: str, lines: int = 15) -> str:
+    """获取服务最近日志。"""
+    try:
+        result = subprocess.run(
+            ["journalctl", "-u", service, "-n", str(lines), "--no-pager"],
+            capture_output=True, text=True, timeout=10,
+        )
+        output = result.stdout.strip()
+        if output:
+            return f"📋 *{service} 最近日志*\n\n```\n{output}\n```"
+        return f"📋 {service}: 暂无日志"
+    except Exception:
+        return f"⚠ 无法获取 {service} 日志"
 
 
 def _tg_poll_thread():
@@ -1294,24 +1397,8 @@ def _tg_poll_thread():
             if callback:
                 data = callback.get("data", "")
                 query_id = callback.get("id", "")
-                result = _handle_tg_callback(data, query_id)
-
-                # 发送结果（带菜单键盘）
-                buttons = [
-                    [
-                        {"text": "📊 状态", "callback_data": "status"},
-                        {"text": "🔍 分析", "callback_data": "analyze"},
-                    ],
-                    [
-                        {"text": "📈 流量", "callback_data": "traffic"},
-                        {"text": "📡 路由", "callback_data": "route"},
-                    ],
-                    [
-                        {"text": "⚙️ 配置", "callback_data": "config"},
-                        {"text": "🔄 刷新", "callback_data": "refresh"},
-                    ],
-                ]
-                send_telegram_keyboard(result, buttons)
+                result_text, keyboard = _handle_tg_callback(data, query_id)
+                send_telegram_keyboard(result_text, keyboard)
 
         time.sleep(1)
 

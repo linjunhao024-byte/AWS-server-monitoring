@@ -227,23 +227,74 @@ def poll_telegram_updates(offset: int = 0, timeout: int = 30) -> list[dict]:
     return []
 
 
-def send_tg_with_menu(text: str) -> bool:
-    """发送带主菜单键盘的 Telegram 消息。"""
-    buttons = [
+def _tg_main_keyboard() -> list:
+    """主菜单键盘。"""
+    return [
         [
             {"text": "📊 状态", "callback_data": "status"},
+            {"text": "📈 流量", "callback_data": "traffic"},
             {"text": "🔍 分析", "callback_data": "analyze"},
         ],
         [
-            {"text": "📈 流量", "callback_data": "traffic"},
             {"text": "📡 路由", "callback_data": "route"},
+            {"text": "🌐 IP", "callback_data": "ip"},
+            {"text": "⚡ 告警", "callback_data": "alerts"},
+        ],
+        [
+            {"text": "🛠 服务", "callback_data": "svc_menu"},
+            {"text": "📋 日志", "callback_data": "log_menu"},
         ],
         [
             {"text": "⚙️ 配置", "callback_data": "config"},
             {"text": "🔄 刷新", "callback_data": "refresh"},
         ],
     ]
-    return send_telegram_keyboard(text, buttons)
+
+
+def _tg_svc_keyboard() -> list:
+    """服务管理子菜单键盘。"""
+    return [
+        [
+            {"text": "▶️ 启动采集", "callback_data": "svc_start_monitor"},
+            {"text": "⏹ 停止采集", "callback_data": "svc_stop_monitor"},
+        ],
+        [
+            {"text": "▶️ 启动路由", "callback_data": "svc_start_route"},
+            {"text": "⏹ 停止路由", "callback_data": "svc_stop_route"},
+        ],
+        [
+            {"text": "🔄 重启全部", "callback_data": "svc_restart_all"},
+            {"text": "📊 服务状态", "callback_data": "svc_status"},
+        ],
+        [
+            {"text": "⬅️ 返回主菜单", "callback_data": "back_main"},
+        ],
+    ]
+
+
+def _tg_log_keyboard() -> list:
+    """日志子菜单键盘。"""
+    return [
+        [
+            {"text": "采集日志", "callback_data": "log_monitor"},
+            {"text": "路由日志", "callback_data": "log_route"},
+        ],
+        [
+            {"text": "分析日志", "callback_data": "log_analyzer"},
+            {"text": "系统日志", "callback_data": "log_system"},
+        ],
+        [
+            {"text": "🧹 清理旧日志", "callback_data": "clean_logs"},
+        ],
+        [
+            {"text": "⬅️ 返回主菜单", "callback_data": "back_main"},
+        ],
+    ]
+
+
+def send_tg_with_menu(text: str) -> bool:
+    """发送带主菜单键盘的 Telegram 消息。"""
+    return send_telegram_keyboard(text, _tg_main_keyboard())
 
 
 # ---------------------------------------------------------------------------
