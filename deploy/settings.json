@@ -1,0 +1,15 @@
+{
+  "SERVER_ALIAS": "MAIN-LS-SERVER",
+  "INTERFACE": "ens5",
+  "DATA_DIR": "/var/log/bandwidth",
+  "DINGTALK_WEBHOOK": "https://oapi.dingtalk.com/robot/send?access_token=6c371dc19e47f319efd8ba9ab8c468e8b5f0c15cb0e4d1842a6a70225c4d471d",
+  "DINGTALK_SECRET": "SECf1540f559390c9c251905b5856bc19ef9b8cd79167d9d1c047239fdcf164d6c5",
+  "XFYUN_API_KEY": "hJgybzduCEbZmZjOagkH:bGvborVEQXrDLUUHFqlX",
+  "XFYUN_ENABLED": true,
+  "EMAIL_ENABLED": true,
+  "SMTP_USERNAME": "linjunhao@ljh2077.com",
+  "SMTP_PASSWORD": "DNimUXfQyFq5iH4Q",
+  "EMAIL_RECIPIENTS": ["admin@ljh2077.com"],
+  "ROUTE_TARGET": "114.114.114.114",
+  "ROUTE_INTERVAL": 300
+}

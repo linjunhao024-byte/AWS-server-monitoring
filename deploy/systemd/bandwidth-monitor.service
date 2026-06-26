@@ -1,0 +1,22 @@
+[Unit]
+Description=AWS Network Bandwidth 1Hz Sampling Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/bandwidth_monitor/monitor_daemon.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bandwidth-monitor
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/bandwidth
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

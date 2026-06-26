@@ -1,0 +1,16 @@
+[Unit]
+Description=Bandwidth Credit System Analyzer
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/bandwidth_monitor/analyzer_cli.py --auto
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bandwidth-analyzer
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadOnlyPaths=/var/log/bandwidth
+ProtectHome=yes
+PrivateTmp=yes
