@@ -312,13 +312,21 @@ def action_realtime_log():
     if idx == -1:
         return
     svc = "bandwidth-monitor" if idx == 0 else "route-monitor"
-    print(f"\n  {c(DIM, 'Ctrl+C 退出实时日志')}\n")
+    print(f"\n  {c(DIM, '按 Enter 停止实时日志并返回菜单')}\n")
+    proc = subprocess.Popen(
+        ["journalctl", "-u", svc, "-f", "--no-pager"],
+        stdout=sys.stdout, stderr=sys.stderr,
+    )
     try:
-        subprocess.run(["journalctl", "-u", svc, "-f", "--no-pager"], timeout=3600)
-    except KeyboardInterrupt:
+        input()
+    except (EOFError, KeyboardInterrupt):
         pass
-    except subprocess.TimeoutExpired:
-        pass
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 def action_recent_log():
@@ -333,6 +341,7 @@ def action_recent_log():
     svc = svcs[idx]
     print(f"\n  {c(CYAN, f'--- {svc} 最近 30 行 ---')}\n")
     subprocess.run(["journalctl", "-u", svc, "-n", "30", "--no-pager"], timeout=10)
+    print(f"\n  {c(DIM, '按 Enter 返回菜单')}")
     pause()
 
 
