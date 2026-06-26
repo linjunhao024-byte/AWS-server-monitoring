@@ -334,10 +334,118 @@ def check_version() -> dict:
             latest = data.get("tag_name", "").lstrip("v")
             if latest:
                 result["latest"] = latest
-                # 简单版本比较
                 if latest != CURRENT_VERSION:
                     result["update_available"] = True
     except Exception:
         pass
 
+    return result
+
+
+def do_update() -> dict:
+    """
+    一键更新：从 GitHub 拉取最新代码，保留配置，重启服务。
+
+    Returns:
+        {"success": bool, "message": str, "version": str}
+    """
+    import subprocess
+    import shutil
+    import tempfile
+    from config import INSTALL_DIR, CONFIG_FILE
+
+    result = {"success": False, "message": "", "version": ""}
+
+    # 1. 下载最新代码到临时目录
+    try:
+        tmp_dir = tempfile.mkdtemp(prefix="aws_monitor_update_")
+        tar_url = "https://github.com/linjunhao024-byte/AWS-server-monitoring/archive/refs/heads/main.tar.gz"
+        tar_path = os.path.join(tmp_dir, "update.tar.gz")
+
+        import urllib.request
+        urllib.request.urlretrieve(tar_url, tar_path)
+
+        # 解压
+        import tarfile
+        with tarfile.open(tar_path, "r:gz") as tar:
+            tar.extractall(tmp_dir)
+
+        # 找到解压后的 monitor 目录
+        extracted_dir = os.path.join(tmp_dir, "AWS-server-monitoring-main", "monitor")
+        if not os.path.isdir(extracted_dir):
+            result["message"] = "下载解压失败：未找到 monitor 目录"
+            return result
+
+    except Exception as e:
+        result["message"] = f"下载失败: {e}"
+        return result
+
+    # 2. 备份当前配置
+    backup_config = None
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                backup_config = f.read()
+        except Exception:
+            pass
+
+    # 3. 复制新文件（跳过 settings.json）
+    try:
+        skip_files = {"settings.json", "__pycache__"}
+        for name in os.listdir(extracted_dir):
+            if name in skip_files:
+                continue
+            src = os.path.join(extracted_dir, name)
+            dst = os.path.join(INSTALL_DIR, name)
+            if os.path.isdir(src):
+                if os.path.isdir(dst):
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+    except Exception as e:
+        result["message"] = f"文件更新失败: {e}"
+        return result
+
+    # 4. 恢复配置
+    if backup_config:
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                f.write(backup_config)
+            os.chmod(CONFIG_FILE, 0o600)
+        except Exception:
+            pass
+
+    # 5. 重启服务
+    services = ["bandwidth-monitor.service", "route-monitor.service"]
+    restarted = []
+    for svc in services:
+        try:
+            subprocess.run(["systemctl", "restart", svc],
+                           capture_output=True, timeout=10)
+            restarted.append(svc)
+        except Exception:
+            pass
+
+    # 6. 清理临时文件
+    try:
+        shutil.rmtree(tmp_dir)
+    except Exception:
+        pass
+
+    # 7. 读取新版本号
+    new_version = "unknown"
+    try:
+        new_config = os.path.join(INSTALL_DIR, "config.py")
+        with open(new_config, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("CURRENT_VERSION"):
+                    new_version = line.split('"')[1]
+                    break
+    except Exception:
+        pass
+
+    result["success"] = True
+    result["version"] = new_version
+    result["message"] = f"更新成功 → v{new_version}，已重启 {len(restarted)} 个服务"
     return result

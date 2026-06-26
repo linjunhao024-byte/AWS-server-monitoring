@@ -30,7 +30,7 @@ from config import (
 )
 from utils import (
     now_iso, format_bytes, get_server_ip,
-    health_check, rotate_logs, check_disk_alert, check_version,
+    health_check, rotate_logs, check_disk_alert, check_version, do_update,
 )
 
 
@@ -582,6 +582,7 @@ def menu_config():
         "发送钉钉测试消息",
         "清理过期日志",
         "检查版本更新",
+        "一键更新到最新版",
     ]
     idx = ask_choice("选择操作", options)
     if idx == -1:
@@ -673,11 +674,27 @@ def menu_config():
         ver = check_version()
         if ver["update_available"]:
             print(f"  {c(YELLOW, '⚠ 发现新版本')} {c(GREEN, ver['latest'])}")
-            print(f"  {c(DIM, '更新: cd /opt/bandwidth_monitor && bash install.sh')}")
         elif ver["latest"] != "unknown":
             print(f"  {c(GREEN, '✓ 已是最新版本')}")
         else:
             print(f"  {c(YELLOW, '⚠ 无法连接 GitHub')}")
+
+    elif idx == 8:
+        # 一键更新
+        print(f"\n  当前版本: {c(GREEN, CURRENT_VERSION)}")
+        print(f"  检查更新...")
+        ver = check_version()
+        if not ver["update_available"]:
+            print(f"  {c(GREEN, '✓ 已是最新版本')}")
+        else:
+            print(f"  {c(YELLOW, '发现新版本')} {c(GREEN, ver['latest'])}")
+            if input(f"  确认更新？(y/N): ").strip().lower() == 'y':
+                print(f"  开始更新...")
+                result = do_update()
+                if result["success"]:
+                    print(f"  {c(GREEN, '✓')} {result['message']}")
+                else:
+                    print(f"  {c(RED, '✗')} {result['message']}")
 
     save_config()
     print(f"\n  {c(GREEN, '✓')} 配置已保存到 settings.json")
@@ -848,6 +865,7 @@ def main():
     parser.add_argument("--report", action="store_true", help="发送钉钉日报")
     parser.add_argument("--rotate", action="store_true", help="清理过期日志")
     parser.add_argument("--version", action="store_true", help="检查版本更新")
+    parser.add_argument("--update", action="store_true", help="一键更新到最新版本")
     args = parser.parse_args()
 
     # CLI 快捷命令
@@ -893,6 +911,22 @@ def main():
             print(f"  {c(GREEN, '✓ 已是最新版本')}")
         else:
             print(f"  {c(YELLOW, '⚠ 无法连接 GitHub')}")
+        return
+
+    if args.update:
+        print(f"  当前版本: {c(GREEN, CURRENT_VERSION)}")
+        print(f"  检查更新...")
+        ver = check_version()
+        if not ver["update_available"]:
+            print(f"  {c(GREEN, '✓ 已是最新版本')}")
+            return
+        print(f"  {c(YELLOW, '发现新版本')} {c(GREEN, ver['latest'])}")
+        print(f"  开始更新...")
+        result = do_update()
+        if result["success"]:
+            print(f"  {c(GREEN, '✓')} {result['message']}")
+        else:
+            print(f"  {c(RED, '✗')} {result['message']}")
         return
 
     # 首次运行引导
