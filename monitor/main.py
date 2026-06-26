@@ -18,7 +18,7 @@ import subprocess
 # 确保能找到同目录下的模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from logo import LOGO_TEXT, LOGO_VERSION_LINE, SIGNATURE, ABOUT_INFO
+from logo import LOGO_TEXT, LOGO_VERSION_LINE, LOGO_ABOUT, SIGNATURE, ABOUT_INFO
 
 from config import (
     INTERFACE, DATA_DIR, INSTALL_DIR,
@@ -1659,12 +1659,14 @@ def _is_first_run() -> bool:
 def action_about():
     """[A] 关于"""
     clear_screen()
+    # Logo
+    print(c(CYAN, LOGO_ABOUT))
+    print()
+    print(f"  {c(BOLD, ABOUT_INFO['full_name'])}  v{CURRENT_VERSION}")
+    print(f"  {c(DIM, ABOUT_INFO['description'])}")
+    print()
+
     step_frame(f"{ABOUT_INFO['name']}")
-    step_row()
-    step_row(f"  {c(BOLD, ABOUT_INFO['full_name'])}  v{CURRENT_VERSION}")
-    step_row(f"  {c(DIM, ABOUT_INFO['description'])}")
-    step_row()
-    step_sep()
     step_row(c(BOLD, "  作者"))
     step_sep()
     step_row(f"  {c(GREEN, ABOUT_INFO['author'])}")
@@ -1677,11 +1679,8 @@ def action_about():
     step_sep()
     step_row(c(BOLD, "  技术栈"))
     step_sep()
-    step_row(f"  语言: Python 3.10+ (零依赖核心)")
-    step_row(f"  平台: AWS Lightsail / Debian")
-    step_row(f"  服务: systemd (daemon + timer)")
-    step_row(f"  通知: 钉钉 · Telegram · 邮件")
-    step_row(f"  AI:   讯飞星火 4.0 Ultra")
+    for label, value in ABOUT_INFO["tech"]:
+        step_row(f"  {label + ':':<8} {value}")
     step_end()
     pause()
 
