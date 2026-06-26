@@ -168,7 +168,7 @@ detect_interface() {
         | grep -E "^[0-9]+" \
         | awk -F: '{print $2}' \
         | tr -d ' ' \
-        | grep -vE '^(lo|docker[0-9]*|br-[a-f0-9]+|veth[a-f0-9]+|virbr[0-9]*|vmnet[0-9]*|tun[0-9]*|tap[0-9]*|ppp[0-9]*|wg[0-9]*|CloudflareWARP|warp[0-9]*|zt[a-z0-9]+|tailscale[0-9]*|utun[0-9]*)$' \
+        | grep -vE '^(lo|docker|br-|veth|virbr|vmnet|tun|tap|ppp|wg|CloudflareWARP|warp|zt|tailscale|utun)' \
         | head -1)
     if [ -z "$CFG_INTERFACE" ]; then
         CFG_INTERFACE="eth0"
@@ -284,11 +284,22 @@ install_files() {
     step_bottom
 }
 
+json_escape() {
+    # 转义字符串中的特殊字符，使其安全嵌入 JSON
+    local s="$1"
+    s="${s//\\/\\\\}"   # 反斜杠
+    s="${s//\"/\\\"}"   # 双引号
+    s="${s//$'\n'/\\n}" # 换行
+    s="${s//$'\r'/\\r}" # 回车
+    s="${s//$'\t'/\\t}" # 制表符
+    echo "$s"
+}
+
 write_config() {
     step_title "写入配置"
     step_sep
 
-    # 构建收件人 JSON 数组
+    # 构建收件人 JSON 数组（过滤空值）
     local recipients_json="[]"
     if [ -n "$CFG_EMAIL_RECIPIENTS" ]; then
         recipients_json="["
@@ -296,33 +307,50 @@ write_config() {
         IFS=',' read -ra RECIPIENTS <<< "$CFG_EMAIL_RECIPIENTS"
         for r in "${RECIPIENTS[@]}"; do
             r=$(echo "$r" | xargs)  # trim
+            [ -z "$r" ] && continue  # 跳过空值
             if $first; then
                 first=false
             else
                 recipients_json+=", "
             fi
-            recipients_json+="\"$r\""
+            recipients_json+="\"$(json_escape "$r")\""
         done
         recipients_json+="]"
     fi
 
+    # 转义所有用户输入
+    local _alias _wh _secret _xfyun _smtp_user _smtp_pass _route_target
+    _alias=$(json_escape "$CFG_SERVER_ALIAS")
+    _wh=$(json_escape "$CFG_DINGTALK_WEBHOOK")
+    _secret=$(json_escape "$CFG_DINGTALK_SECRET")
+    _xfyun=$(json_escape "$CFG_XFYUN_API_KEY")
+    _smtp_user=$(json_escape "$CFG_SMTP_USERNAME")
+    _smtp_pass=$(json_escape "$CFG_SMTP_PASSWORD")
+    _route_target=$(json_escape "$CFG_ROUTE_TARGET")
+
     cat > "${CFG_INSTALL_DIR}/settings.json" << JSONEOF
 {
-  "SERVER_ALIAS": "${CFG_SERVER_ALIAS}",
+  "SERVER_ALIAS": "${_alias}",
   "INTERFACE": "${CFG_INTERFACE}",
   "DATA_DIR": "${CFG_DATA_DIR}",
-  "DINGTALK_WEBHOOK": "${CFG_DINGTALK_WEBHOOK}",
-  "DINGTALK_SECRET": "${CFG_DINGTALK_SECRET}",
-  "XFYUN_API_KEY": "${CFG_XFYUN_API_KEY}",
+  "DINGTALK_WEBHOOK": "${_wh}",
+  "DINGTALK_SECRET": "${_secret}",
+  "XFYUN_API_KEY": "${_xfyun}",
   "XFYUN_ENABLED": ${CFG_XFYUN_ENABLED},
   "EMAIL_ENABLED": ${CFG_EMAIL_ENABLED},
-  "SMTP_USERNAME": "${CFG_SMTP_USERNAME}",
-  "SMTP_PASSWORD": "${CFG_SMTP_PASSWORD}",
+  "SMTP_USERNAME": "${_smtp_user}",
+  "SMTP_PASSWORD": "${_smtp_pass}",
   "EMAIL_RECIPIENTS": ${recipients_json},
-  "ROUTE_TARGET": "${CFG_ROUTE_TARGET}",
+  "ROUTE_TARGET": "${_route_target}",
   "ROUTE_INTERVAL": ${CFG_ROUTE_INTERVAL}
 }
 JSONEOF
+
+    if [ $? -ne 0 ]; then
+        step_row "${RED}✗ 配置写入失败${NC}"
+        step_bottom
+        return 1
+    fi
 
     chmod 600 "${CFG_INSTALL_DIR}/settings.json"
 
@@ -369,6 +397,8 @@ install_systemd() {
     step_bottom
 }
 
+SERVICE_FAILURES=0
+
 start_services() {
     step_title "启动服务"
     step_sep
@@ -376,17 +406,17 @@ start_services() {
     # 带宽采集
     systemctl start bandwidth-monitor.service 2>/dev/null && \
         step_row "  ${GREEN}●${NC} 带宽采集       ${GREEN}running${NC}" || \
-        step_row "  ${RED}●${NC} 带宽采集       ${RED}failed${NC}"
+        { step_row "  ${RED}●${NC} 带宽采集       ${RED}failed${NC}"; SERVICE_FAILURES=$((SERVICE_FAILURES+1)); }
 
     # 每日分析定时器
     systemctl start bandwidth-analyzer.timer 2>/dev/null && \
         step_row "  ${GREEN}●${NC} 每日分析定时器 ${GREEN}running${NC}" || \
-        step_row "  ${RED}●${NC} 每日分析定时器 ${RED}failed${NC}"
+        { step_row "  ${RED}●${NC} 每日分析定时器 ${RED}failed${NC}"; SERVICE_FAILURES=$((SERVICE_FAILURES+1)); }
 
     # 路由监测
     systemctl start route-monitor.service 2>/dev/null && \
         step_row "  ${GREEN}●${NC} 路由监测       ${GREEN}running${NC}" || \
-        step_row "  ${RED}●${NC} 路由监测       ${RED}failed${NC}"
+        { step_row "  ${RED}●${NC} 路由监测       ${RED}failed${NC}"; SERVICE_FAILURES=$((SERVICE_FAILURES+1)); }
 
     step_bottom
 }
@@ -455,7 +485,13 @@ interactive_config() {
     step_title "5/5  路由监测"
     step_sep
     CFG_ROUTE_TARGET=$(ask_input "监测目标" "${CFG_ROUTE_TARGET}")
-    CFG_ROUTE_INTERVAL=$(ask_input "检测间隔(秒)" "${CFG_ROUTE_INTERVAL}")
+    while true; do
+        CFG_ROUTE_INTERVAL=$(ask_input "检测间隔(秒)" "${CFG_ROUTE_INTERVAL}")
+        if [[ "$CFG_ROUTE_INTERVAL" =~ ^[0-9]+$ ]] && [ "$CFG_ROUTE_INTERVAL" -ge 10 ]; then
+            break
+        fi
+        echo -e "  ${RED}请输入 ≥10 的整数${NC}"
+    done
     step_bottom
 }
 
@@ -493,6 +529,12 @@ show_completion() {
     frame_row "  ${DIM}配置可通过菜单 '5. 配置管理' 随时修改${NC}"
     frame_row "  ${DIM}或直接编辑 ${CFG_INSTALL_DIR}/settings.json${NC}"
     frame_row ""
+    if [ "$SERVICE_FAILURES" -gt 0 ]; then
+        frame_sep
+        frame_row "  ${RED}⚠  有 ${SERVICE_FAILURES} 个服务启动失败，请检查日志:${NC}"
+        frame_row "  ${DIM}journalctl -xe${NC}"
+        frame_row ""
+    fi
     frame_bottom
     echo ""
 }
@@ -542,7 +584,7 @@ main() {
 
     # 显示可用网卡（区分物理和虚拟）
     step_row "可用网卡:"
-    local virtual_pattern="^(lo|docker[0-9]*|br-[a-f0-9]+|veth[a-f0-9]+|virbr[0-9]*|vmnet[0-9]*|tun[0-9]*|tap[0-9]*|ppp[0-9]*|wg[0-9]*|CloudflareWARP|warp[0-9]*|zt[a-z0-9]+|tailscale[0-9]*|utun[0-9]*)$"
+    local virtual_pattern="^(lo|docker|br-|veth|virbr|vmnet|tun|tap|ppp|wg|CloudflareWARP|warp|zt|tailscale|utun)"
     ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | while read iface; do
         if echo "$iface" | grep -qE "$virtual_pattern"; then
             step_row "  ${DIM}- ${iface} (虚拟/已排除)${NC}"

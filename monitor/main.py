@@ -98,20 +98,40 @@ def main_end():
     print()
 
 
+def _display_width(s: str) -> int:
+    """计算字符串的终端显示宽度（中文占 2 列）。"""
+    import unicodedata
+    width = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ('F', 'W'):
+            width += 2
+        else:
+            width += 1
+    return width
+
+
+def _strip_ansi(s: str) -> str:
+    """去除 ANSI 转义序列。"""
+    import re
+    return re.sub(r'\033\[[0-9;]*m', '', s)
+
+
 def step_frame(title: str):
     """绘制步骤框标题（单线框）。"""
     print()
     print(c(CYAN, f"┌{'─' * W}┐"))
-    print(c(CYAN, "│") + c(BOLD, f"  {title}") + " " * (W - len(title) - 2) + c(CYAN, "│"))
+    raw = f"  {title}"
+    pad = W - _display_width(raw)
+    if pad < 0:
+        pad = 0
+    print(c(CYAN, "│") + c(BOLD, raw) + " " * pad + c(CYAN, "│"))
     print(c(CYAN, f"├{'─' * W}┤"))
 
 
 def step_row(text: str = ""):
     """步骤框内容行。"""
-    # 计算可见字符长度（去除 ANSI 转义序列后）
-    import re
-    visible = re.sub(r'\033\[[0-9;]*m', '', text)
-    pad = W - 4 - len(visible)
+    visible = _strip_ansi(text)
+    pad = W - 4 - _display_width(visible)
     if pad < 0:
         pad = 0
     print(c(CYAN, "│") + f"  {text}" + " " * pad + c(CYAN, "│"))
