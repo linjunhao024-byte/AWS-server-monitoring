@@ -267,7 +267,7 @@ install_files() {
     local files=(
         config.py utils.py stats.py notifications.py
         data_sources.py analyzer.py reporter.py
-        monitor_daemon.py route_daemon.py main.py
+        monitor_daemon.py route_daemon.py logo.py main.py
     )
     for f in "${files[@]}"; do
         if [ -f "${SCRIPT_DIR}/$f" ]; then
@@ -282,6 +282,20 @@ install_files() {
     # 设置权限
     step_row "设置文件权限..."
     chmod 755 "${CFG_INSTALL_DIR}"/*.py
+
+    # 冒烟检查：入口能否导入全部模块（漏拷文件会在这里当场暴露，
+    # 而不是等装完之后 monitor 命令起不来）
+    step_row "校验模块完整性..."
+    if ( cd "${CFG_INSTALL_DIR}" && python3 -c \
+        "import config, utils, stats, notifications, data_sources, analyzer, reporter, monitor_daemon, route_daemon, logo, main" ) \
+        >/tmp/linmon_smoke.log 2>&1; then
+        step_row "  ${GREEN}✓${NC} 全部模块导入正常"
+    else
+        step_row "  ${RED}✗ 模块导入失败，安装中止${NC}"
+        step_row "  ${DIM}$(tail -3 /tmp/linmon_smoke.log | tr '\n' ' ')${NC}"
+        step_bottom
+        return 1
+    fi
 
     # 安装全局快捷命令
     step_row "安装快捷命令..."
@@ -304,15 +318,16 @@ CMDEOF
 }
 
 json_escape() {
-    # 转义字符串中的特殊字符，使其安全嵌入 JSON
+    # 转义字符串中的特殊字符，使其安全嵌入 JSON。
+    # 注意：只转义 JSON 语法本身需要的字符。$ 与反引号不能转成 \$ / \`，
+    # 因为变量在 heredoc 里已经展开完毕，展开结果不会再被 shell 处理，
+    # 这两类反斜杠会原样落进 JSON 造成 "Invalid \escape"。
     local s="$1"
     s="${s//\\/\\\\}"   # 反斜杠
     s="${s//\"/\\\"}"   # 双引号
     s="${s//$'\n'/\\n}" # 换行
     s="${s//$'\r'/\\r}" # 回车
     s="${s//$'\t'/\\t}" # 制表符
-    s="${s//\$/\\$}"    # 美元符号（防 shell 展开）
-    s="${s//\`/\\\`}"   # 反引号（防 shell 展开）
     echo "$s"
 }
 
@@ -352,7 +367,8 @@ write_config() {
     _tg_chatid=$(json_escape "${CFG_TG_CHAT_ID:-}")
     _sender=$(json_escape "${CFG_SENDER_NAME:-服务器监控}")
 
-    cat > "${CFG_INSTALL_DIR}/settings.json" << JSONEOF
+    local cfg_tmp="${CFG_INSTALL_DIR}/settings.json.tmp"
+    cat > "$cfg_tmp" << JSONEOF
 {
   "SERVER_ALIAS": "${_alias}",
   "INTERFACE": "${CFG_INTERFACE}",
@@ -382,15 +398,19 @@ write_config() {
 }
 JSONEOF
 
-    if [ $? -ne 0 ]; then
-        step_row "${RED}✗ 配置写入失败${NC}"
+    # 先校验再落盘：JSON 不合法时宁可安装失败，也不要写出一份
+    # 会被 load_config 静默丢弃的配置（那会让所有推送悄悄失效）
+    if python3 -m json.tool "$cfg_tmp" >/dev/null 2>&1; then
+        chmod 600 "$cfg_tmp"
+        mv "$cfg_tmp" "${CFG_INSTALL_DIR}/settings.json"
+    else
+        step_row "${RED}✗ 生成的 settings.json 不是合法 JSON，安装中止${NC}"
+        step_row "${DIM}可能是配置值里含有未转义的特殊字符，已保留现场: ${cfg_tmp}${NC}"
         step_bottom
         return 1
     fi
 
-    chmod 600 "${CFG_INSTALL_DIR}/settings.json"
-
-    step_row "${GREEN}✓ 配置已写入 settings.json${NC}"
+    step_row "${GREEN}✓ 配置已写入 settings.json（JSON 校验通过）${NC}"
     step_bottom
 }
 
@@ -398,24 +418,61 @@ install_systemd() {
     step_title "配置 systemd 服务"
     step_sep
 
-    # 复制 service 文件
+    # 复制 service 文件（daily-report.timer 由下面按用户配置的时间现场生成，
+    # 不再复制仓库里那份固定 23:00 的模板）
     local services=(
         "bandwidth-monitor.service"
         "bandwidth-analyzer.service"
         "bandwidth-analyzer.timer"
         "route-monitor.service"
         "bandwidth-daily-report.service"
-        "bandwidth-daily-report.timer"
     )
 
     for svc in "${services[@]}"; do
         if [ -f "${SCRIPT_DIR}/systemd/${svc}" ]; then
             cp "${SCRIPT_DIR}/systemd/${svc}" "/etc/systemd/system/"
+            # 用户改了数据目录时，把单元里的 /var/log/bandwidth 一起改掉：
+            # 否则 ReadWritePaths / ReadOnlyPaths 指向旧路径，采集会因为
+            # 无写权限直接失败（以前这是写死的，改配置就踩坑）。
+            if [ "$CFG_DATA_DIR" != "/var/log/bandwidth" ]; then
+                sed -i "s|/var/log/bandwidth|${CFG_DATA_DIR}|g" "/etc/systemd/system/${svc}"
+            fi
             step_row "  ${GREEN}✓${NC} ${svc}"
         else
             step_row "  ${YELLOW}⚠${NC} ${svc} 未找到"
         fi
     done
+
+    # 每日报告定时器：用安装向导里填的 HH:MM 生成。
+    # 以前这里直接复制一份 OnCalendar 写死 23:00 的模板，
+    # 于是"每日推送时间"这个配置项在装完之后完全不生效。
+    local report_hh=23 report_mm=0
+    if [[ "${CFG_DAILY_REPORT_TIME:-}" =~ ^([0-9]{1,2}):([0-9]{2})$ ]]; then
+        local h=$((10#${BASH_REMATCH[1]}))
+        local m=$((10#${BASH_REMATCH[2]}))
+        # 越界值（比如 25:99）不能直接写进 OnCalendar，
+        # 那样 systemd 会拒绝加载，timer 永远不会触发
+        if (( h >= 0 && h <= 23 && m >= 0 && m <= 59 )); then
+            report_hh=$h
+            report_mm=$m
+        else
+            step_row "  ${YELLOW}⚠${NC} 推送时间 ${CFG_DAILY_REPORT_TIME} 非法，回落 23:00"
+        fi
+    elif [ -n "${CFG_DAILY_REPORT_TIME:-}" ]; then
+        step_row "  ${YELLOW}⚠${NC} 推送时间 ${CFG_DAILY_REPORT_TIME} 格式无效，回落 23:00"
+    fi
+    cat > /etc/systemd/system/bandwidth-daily-report.timer << DRTEOF
+[Unit]
+Description=Send daily traffic report at ${report_hh}:${report_mm}
+
+[Timer]
+OnCalendar=*-*-* ${report_hh}:$(printf '%02d' "$report_mm"):00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+DRTEOF
+    step_row "  ${GREEN}✓${NC} bandwidth-daily-report.timer (每天 $(printf '%02d:%02d' "$report_hh" "$report_mm"))"
 
     step_sep
     step_row "重载 systemd..."
@@ -450,7 +507,7 @@ StandardOutput=journal
 StandardError=journal
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/log/bandwidth
+ReadWritePaths=${CFG_DATA_DIR}
 ProtectHome=yes
 PrivateTmp=yes
 MSVCEOF
@@ -495,6 +552,13 @@ start_services() {
     systemctl start route-monitor.service 2>/dev/null && \
         step_row "  ${GREEN}●${NC} 路由监测       ${GREEN}running${NC}" || \
         { step_row "  ${RED}●${NC} 路由监测       ${RED}failed${NC}"; SERVICE_FAILURES=$((SERVICE_FAILURES+1)); }
+
+    # 定时器必须 start 才会立刻进入调度：只 enable 的话要等到下次开机
+    for tmr in bandwidth-daily-report.timer bandwidth-maintenance.timer; do
+        systemctl start "$tmr" 2>/dev/null && \
+            step_row "  ${GREEN}●${NC} ${tmr} ${GREEN}running${NC}" || \
+            { step_row "  ${RED}●${NC} ${tmr} ${RED}failed${NC}"; SERVICE_FAILURES=$((SERVICE_FAILURES+1)); }
+    done
 
     step_bottom
 }
@@ -725,6 +789,10 @@ StandardError=journal
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadOnlyPaths=/var/log/bandwidth
+# 这个一次性服务发完消息后要自行删除 unit 并 disable 自己；
+# ProtectSystem=strict 会把 /etc 变成只读，导致自清理全部失败、
+# timer 保留下来每次开机又发一次。这里显式放开 systemd 目录写权限。
+ReadWritePaths=/etc/systemd/system /etc/systemd/system/timers.target.wants
 ProtectHome=yes
 PrivateTmp=yes
 
@@ -845,7 +913,7 @@ main() {
     step_sep
     step_row "  路由目标:    ${GREEN}${CFG_ROUTE_TARGET}${NC}"
     step_row "  路由间隔:    ${CFG_ROUTE_INTERVAL}秒"
-    step_row "  快捷命令:    ${YELLOW}monitor${NC}"
+    step_row "  快捷命令:    ${YELLOW}$(if [ -n "${CFG_SHORTCUT:-}" ]; then echo "${CFG_SHORTCUT} (及 monitor)"; else echo "monitor"; fi)${NC}"
     step_row ""
     step_bottom
 
@@ -863,7 +931,8 @@ main() {
     start_services
 
     # 钉钉通知：测试消息 + 10 分钟后数据消息
-    if [ -n "$CFG_DINGTALK_WEBHOOK" ] && [ -n "$CFG_DINGTALK_SECRET" ]; then
+    # 加签是可选的：只填 webhook 也能发，不需要 secret 才能触发测试
+    if [ -n "$CFG_DINGTALK_WEBHOOK" ]; then
         send_dingtalk_test
     fi
 

@@ -187,16 +187,16 @@ def _systemctl_status(service: str) -> str:
         return "未知"
 
 
-def _update_daily_report_timer(time_str: str) -> bool:
-    """更新每日报告的 systemd timer 时间。"""
+def _update_daily_report_timer(time_str: str) -> tuple[bool, str]:
+    """更新每日报告的 systemd timer 时间。返回 (是否成功, 失败原因)。"""
     try:
         hh, mm = time_str.split(":")
         hh = int(hh)
         mm = int(mm)
         if not (0 <= hh <= 23 and 0 <= mm <= 59):
-            return False
+            return False, "时间超出范围（HH 0-23 / MM 0-59）"
     except (ValueError, AttributeError):
-        return False
+        return False, "格式错误，应为 HH:MM"
 
     timer_content = f"""[Unit]
 Description=Send daily traffic report at {time_str}
@@ -216,9 +216,16 @@ WantedBy=timers.target
         subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
         subprocess.run(["systemctl", "re-enable", "bandwidth-daily-report.timer"],
                        capture_output=True, timeout=10)
-        return True
-    except Exception:
-        return False
+        # enable 之后还要 start，否则改了时间但 timer 没在跑
+        subprocess.run(["systemctl", "start", "bandwidth-daily-report.timer"],
+                       capture_output=True, timeout=10)
+        return True, ""
+    except PermissionError:
+        return False, "无权限写入 systemd 单元，请用 sudo 运行 monitor"
+    except OSError as exc:
+        return False, f"写入失败: {exc}"
+    except Exception as exc:
+        return False, f"未知错误: {exc}"
 
 
 def _mask(s: str) -> str:
@@ -991,12 +998,19 @@ def action_update():
 
 
 def _get_current_shortcuts() -> list[str]:
-    """获取当前所有指向 monitor 的快捷命令。"""
+    """获取指向本项目 monitor 的快捷命令。
+
+    只认两种东西：指向 /usr/local/bin/monitor 的符号链接，
+    以及内容就是我们生成的 `exec python3 <INSTALL_DIR>/main.py` 包装脚本。
+    早期实现把 /usr/local/bin 下"任何提到 main.py 的文件"都算进来，
+    结果菜单里能删掉别的项目的脚本。
+    """
     shortcuts = []
     bin_dir = "/usr/local/bin"
     monitor_path = os.path.join(bin_dir, "monitor")
     if not os.path.exists(monitor_path):
         return shortcuts
+    expected_line = f"exec python3 {os.path.join(INSTALL_DIR, 'main.py')}"
     for name in os.listdir(bin_dir):
         path = os.path.join(bin_dir, name)
         if os.path.islink(path) and os.readlink(path) == monitor_path:
@@ -1004,10 +1018,11 @@ def _get_current_shortcuts() -> list[str]:
         elif os.path.isfile(path) and path != monitor_path:
             try:
                 with open(path, "r") as f:
-                    if "main.py" in f.read():
-                        shortcuts.append(name)
+                    content = f.read()
             except Exception:
-                pass
+                continue
+            if expected_line in content:
+                shortcuts.append(name)
     return sorted(set(shortcuts))
 
 
@@ -1173,12 +1188,13 @@ def action_alert_settings():
     elif idx == 1:
         new_time = input(f"\n  推送时间 (HH:MM) [{DAILY_REPORT_TIME}]: ").strip()
         if new_time:
-            if _update_daily_report_timer(new_time):
+            ok, reason = _update_daily_report_timer(new_time)
+            if ok:
                 cfg.DAILY_REPORT_TIME = new_time
                 save_config()
                 print(f"  {c(GREEN, '✓')} 每日推送时间已设为 {new_time}")
             else:
-                print(f"  {c(RED, '无效时间格式，请使用 HH:MM')}")
+                print(f"  {c(RED, '✗')} 修改失败：{reason}")
     pause()
 
 
@@ -1475,7 +1491,7 @@ def _get_last_logs(service: str, lines: int = 15) -> str:
 
 def _tg_poll_thread():
     """后台线程：轮询 Telegram 回调。"""
-    from notifications import poll_telegram_updates, send_telegram_keyboard
+    from notifications import poll_telegram_updates, send_telegram_keyboard, answer_callback
 
     offset = 0
     while is_running():
@@ -1489,10 +1505,19 @@ def _tg_poll_thread():
 
             callback = update.get("callback_query")
             if callback:
-                data = callback.get("data", "")
                 query_id = callback.get("id", "")
+                chat_id = str(((callback.get("message") or {}).get("chat") or {}).get("id", ""))
+                # 只接受配置里的 chat：否则任何人给这个 bot 发回调都能启停服务
+                if TG_CHAT_ID and chat_id != str(TG_CHAT_ID):
+                    print(f"[WARN] 忽略来自 chat {chat_id} 的回调 {callback.get('data')}",
+                          file=sys.stderr)
+                    answer_callback(query_id, "无权限")
+                    continue
+
+                data = callback.get("data", "")
                 result_text, keyboard = _handle_tg_callback(data, query_id)
-                # 统一加签名
+                # 统一加签名（回执由 _handle_tg_callback 开头已经 answer 掉，
+                # 这里不再补第二次，避免 Telegram 报 "query is too old"）
                 result_text = f"{result_text}\n\n{SIGNATURE}"
                 send_telegram_keyboard(result_text, keyboard)
 

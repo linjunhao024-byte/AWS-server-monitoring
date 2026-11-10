@@ -53,20 +53,24 @@ def send_dingtalk(title: str, markdown_text: str,
     webhook = webhook or DINGTALK_WEBHOOK
     secret = secret or DINGTALK_SECRET
 
-    if not webhook or not secret:
+    if not webhook:
         print("[WARN] 钉钉 Webhook 未配置，跳过推送。", file=sys.stderr)
         return False
 
     try:
-        timestamp = str(round(time.time() * 1000))
-        string_to_sign = f"{timestamp}\n{secret}"
-        hmac_code = hmac.new(
-            secret.encode("utf-8"),
-            string_to_sign.encode("utf-8"),
-            digestmod=hashlib.sha256,
-        ).digest()
-        sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
-        url = f"{webhook}&timestamp={timestamp}&sign={sign}"
+        url = webhook
+        # 加签是可选的：机器人只开"自定义关键词"时也能发，
+        # 这种情况下不能带 timestamp/sign，否则钉钉会以签名错误拒收。
+        if secret:
+            timestamp = str(round(time.time() * 1000))
+            string_to_sign = f"{timestamp}\n{secret}"
+            hmac_code = hmac.new(
+                secret.encode("utf-8"),
+                string_to_sign.encode("utf-8"),
+                digestmod=hashlib.sha256,
+            ).digest()
+            sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
+            url = f"{webhook}&timestamp={timestamp}&sign={sign}"
 
         payload = json.dumps({
             "msgtype": "markdown",
@@ -598,6 +602,42 @@ def notify_data_summary():
         pass
 
 
+def send_weekly_email_report() -> bool:
+    """生成并发送邮件周报（HTML + 趋势图）。
+
+    由 --daily-report 在"今天是配置里的周报发送日"时调用：
+    以前这个功能只在菜单 [7] 里能手动触发，README 却宣称有自动周报，
+    用户配好 SMTP 也永远收不到。
+    """
+    if not EMAIL_ENABLED:
+        return False
+    try:
+        from reporter import get_traffic_data, build_email_html, generate_trend_chart_image
+        from utils import get_iso_week_info
+        from config import SERVER_ALIAS
+
+        traffic = get_traffic_data()
+        if not traffic:
+            print("[WARN] 无法获取流量数据，跳过周报邮件", file=sys.stderr)
+            return False
+
+        chart_path = generate_trend_chart_image(traffic.daily_data)
+        html = build_email_html(traffic, chart_path)
+        week_info = get_iso_week_info()
+        subject = f"服务器流量周报 - 第{week_info['week']}周 - {SERVER_ALIAS}"
+        ok = send_email(subject, html, chart_path)
+        if chart_path and os.path.exists(chart_path):
+            try:
+                os.remove(chart_path)
+            except OSError:
+                pass
+        print(f"[{'OK' if ok else 'ERR'}] 周报邮件{'已发送' if ok else '发送失败'}")
+        return ok
+    except Exception as exc:
+        print(f"[ERR] 周报邮件生成失败: {exc}", file=sys.stderr)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
@@ -662,11 +702,21 @@ if __name__ == "__main__":
             _sys.exit(0)
 
         elif _sys.argv[1] == "--daily-report":
-            # 每日报告（仅钉钉，Telegram 通过内联键盘按需查看）
+            # 每日报告（钉钉）；若今天是配置的周报发送日，顺带发邮件周报
             from reporter import build_daily_detail_message
-            from config import SERVER_ALIAS
+            from config import SERVER_ALIAS, WEEKLY_REPORT_DAY, EMAIL_ENABLED
+            import datetime as _datetime
 
             msg = build_daily_detail_message()
             send_dingtalk(f"📊 {SERVER_ALIAS} 每日报告", msg)
+            from utils import now_iso
             print(f"[{now_iso()}] 每日报告已推送")
+
+            try:
+                weekday = int(WEEKLY_REPORT_DAY)
+            except (TypeError, ValueError):
+                weekday = 6
+            if EMAIL_ENABLED and _datetime.datetime.now().weekday() == weekday:
+                send_weekly_email_report()
+
             _sys.exit(0)

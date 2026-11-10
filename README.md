@@ -134,10 +134,10 @@ wget -O AWS-server-monitoring.tar.gz https://github.com/linjunhao024-byte/AWS-se
 
 ### 📊 多维告警与战报
 
-- **钉钉推送**：HMAC-SHA256 签名，`urllib` 零依赖实现
-- **邮件周报**：HTML 渲染 + matplotlib 趋势图，优雅降级至 ASCII 图表
+- **钉钉推送**：HMAC-SHA256 签名（Secret 可选，只配 Webhook 也能发）
+- **邮件周报**：HTML 渲染 + matplotlib 趋势图，优雅降级至 ASCII 图表；到 `WEEKLY_REPORT_DAY` 时随每日报告自动发出（也可在菜单里手动触发）
 - **流量日报**：日同比 / 周同比 / 进度条 / 数据完整性校验
-- **路由告警**：拓扑变化毫秒级钉钉推送
+- **路由告警**：拓扑变化毫秒级钉钉推送（traceroute 无结果时不误报）
 
 ---
 
@@ -155,13 +155,22 @@ monitor/
 ├── monitor_daemon.py      # 1Hz 带宽采集守护进程（systemd managed）
 ├── route_daemon.py        # 路由拓扑监测守护进程（systemd managed）
 ├── main.py                # 终端 TUI 菜单入口
+├── logo.py                # ASCII Logo / 版本行 / 署名
 ├── install.sh             # 交互式一键部署向导
+├── uninstall.sh           # 卸载脚本（--purge 会二次确认后删数据）
+├── monitor.sh             # 快捷启动包装脚本
 └── systemd/
     ├── bandwidth-monitor.service
     ├── bandwidth-analyzer.service
     ├── bandwidth-analyzer.timer
+    ├── bandwidth-daily-report.service
+    ├── bandwidth-daily-report.timer   # 模板；实际时间由 install.sh 按配置生成
     └── route-monitor.service
 ```
+
+> `bandwidth-maintenance.service/.timer` 与 `bandwidth-data-check.service/.timer`
+> 不在仓库里，由 `install.sh` 安装时现场生成（前者跑日志轮转 + 磁盘告警，
+> 后者装完 10 分钟发一条「数据是否正常写入」的验证消息，发完自清理）。
 
 ---
 
@@ -182,11 +191,12 @@ sudo bash install.sh
 ║  AWS Lightsail 服务器监控系统 v3.0 — 安装向导                             ║
 ╠═══════════════════════════════════════════════════════════════════════════╣
 ║                                                                           ║
-║  1/5  基本信息        → 服务器别名                                       ║
-║  2/5  钉钉机器人      → Webhook + Secret (可选)                          ║
-║  3/5  讯飞星火 LLM    → API Key (可选)                                   ║
-║  4/5  邮件周报        → SMTP + 收件人 (可选)                             ║
-║  5/5  路由监测        → 目标 IP + 检测间隔                               ║
+║  1/6  基本信息        → 服务器别名                                       ║
+║  2/6  推送配置        → 钉钉 Webhook / Telegram / 邮件 (可选)            ║
+║  3/6  AI 深度分析     → 讯飞星火 API Key (可选)                          ║
+║  4/6  监控参数        → 网卡 / 数据目录 / 采集间隔                       ║
+║  5/6  运维参数        → 每日推送时间 / 日志保留 / 路由目标               ║
+║  6/6  快捷命令        → 自定义 monitor 简写                              ║
 ║                                                                           ║
 ╚═══════════════════════════════════════════════════════════════════════════╝
 ```

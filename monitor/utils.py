@@ -108,13 +108,25 @@ def format_growth_rate(rate: float | None) -> str:
         return f"⬇️ {rate:.1f}%"
 
 
+_IP_CACHE = {"value": None, "ts": 0.0}
+_IP_CACHE_TTL = 600.0   # 秒；IP 不会一分钟变一次，避免每条日报都去打外网 API
+
+
 def get_server_ip() -> str:
-    """获取服务器 IP 地址（优先公网）。"""
+    """获取服务器 IP 地址（优先公网 IP，进程内缓存 10 分钟）。"""
+    now = time.time()
+    if _IP_CACHE["value"] and (now - _IP_CACHE["ts"]) < _IP_CACHE_TTL:
+        return _IP_CACHE["value"]
+
     try:
         import requests
         response = requests.get("https://api.ipify.org", timeout=5)
         if response.status_code == 200:
-            return response.text.strip()
+            ip = response.text.strip()
+            if ip:
+                _IP_CACHE["value"] = ip
+                _IP_CACHE["ts"] = now
+                return ip
     except Exception:
         pass
 
@@ -211,21 +223,35 @@ def health_check(interface: str = None, data_dir: str = None) -> list[dict]:
     else:
         results.append({"component": "钉钉", "status": "warn", "message": "未配置"})
 
-    # 5. 磁盘空间
+    # 5. 磁盘剩余空间
     try:
         st = os.statvfs(data_dir)
         free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
         if free_mb > 500:
-            results.append({"component": "磁盘空间", "status": "ok",
+            results.append({"component": "磁盘剩余", "status": "ok",
                             "message": f"剩余 {free_mb:.0f} MB"})
         elif free_mb > 100:
-            results.append({"component": "磁盘空间", "status": "warn",
+            results.append({"component": "磁盘剩余", "status": "warn",
                             "message": f"剩余 {free_mb:.0f} MB（空间不足）"})
         else:
-            results.append({"component": "磁盘空间", "status": "error",
+            results.append({"component": "磁盘剩余", "status": "error",
                             "message": f"剩余 {free_mb:.0f} MB（严重不足）"})
     except Exception:
-        results.append({"component": "磁盘空间", "status": "warn", "message": "无法检测"})
+        results.append({"component": "磁盘剩余", "status": "warn", "message": "无法检测"})
+
+    # 6. 数据目录体积（与每日维护告警使用同一个阈值 DISK_ALERT_MB，
+    #    免得面板说"一切正常"而维护任务天天告警）
+    try:
+        from config import DISK_ALERT_MB
+        total_mb = sum(os.path.getsize(f) for f in files) / (1024 * 1024) if files else 0.0
+        if total_mb < DISK_ALERT_MB:
+            results.append({"component": "数据目录", "status": "ok",
+                            "message": f"{total_mb:.0f} MB / 阈值 {DISK_ALERT_MB} MB"})
+        else:
+            results.append({"component": "数据目录", "status": "warn",
+                            "message": f"{total_mb:.0f} MB 已超阈值 {DISK_ALERT_MB} MB"})
+    except Exception:
+        results.append({"component": "数据目录", "status": "warn", "message": "无法检测"})
 
     return results
 
@@ -374,10 +400,21 @@ def do_update() -> dict:
         import urllib.request
         urllib.request.urlretrieve(tar_url, tar_path)
 
-        # 解压
+        # 解压：拒绝绝对路径、.. 与指向外部的链接（tar 路径穿越）
         import tarfile
+
+        def _safe_members(members, dest):
+            dest_abs = os.path.abspath(dest)
+            for m in members:
+                target = os.path.abspath(os.path.join(dest, m.name))
+                if not target.startswith(dest_abs + os.sep):
+                    raise ValueError(f"包内含非法路径: {m.name}")
+                if m.issym() or m.islnk():
+                    raise ValueError(f"包内含链接成员: {m.name}")
+                yield m
+
         with tarfile.open(tar_path, "r:gz") as tar:
-            tar.extractall(tmp_dir)
+            tar.extractall(tmp_dir, members=_safe_members(tar.getmembers(), tmp_dir))
 
         # 找到解压后的 monitor 目录
         extracted_dir = os.path.join(tmp_dir, "AWS-server-monitoring-main", "monitor")
@@ -425,12 +462,39 @@ def do_update() -> dict:
         except Exception:
             pass
 
-    # 5. 重启所有服务
+    # 5. 同步 systemd 单元：仓库里的 systemd/ 只是模板，
+    #    真正生效的是 /etc/systemd/system 下的那份。以前更新只覆盖安装目录，
+    #    新版本改了 OnCalendar / 加固项或新增 timer 都永远不会生效。
+    units_synced = 0
+    unit_dir = "/etc/systemd/system"
+    src_unit_dir = os.path.join(INSTALL_DIR, "systemd")
+    if os.path.isdir(src_unit_dir) and os.path.isdir(unit_dir):
+        for name in os.listdir(src_unit_dir):
+            if not (name.endswith(".service") or name.endswith(".timer")):
+                continue
+            if name.startswith("bandwidth-data-check"):
+                continue  # 一次性安装校验单元，不该被复制回来
+            src = os.path.join(src_unit_dir, name)
+            dst = os.path.join(unit_dir, name)
+            try:
+                shutil.copy2(src, dst)
+                units_synced += 1
+            except Exception:
+                pass
+        if units_synced:
+            try:
+                subprocess.run(["systemctl", "daemon-reload"],
+                               capture_output=True, timeout=15)
+            except Exception:
+                pass
+
+    # 6. 重启所有服务
     services = [
         "bandwidth-monitor.service",
         "route-monitor.service",
         "bandwidth-analyzer.timer",
         "bandwidth-maintenance.timer",
+        "bandwidth-daily-report.timer",
     ]
     restarted = []
     for svc in services:
@@ -441,13 +505,13 @@ def do_update() -> dict:
         except Exception:
             pass
 
-    # 6. 清理临时文件
+    # 7. 清理临时文件
     try:
         shutil.rmtree(tmp_dir)
     except Exception:
         pass
 
-    # 7. 读取新版本号
+    # 8. 读取新版本号
     new_version = "unknown"
     try:
         new_config = os.path.join(INSTALL_DIR, "config.py")
@@ -461,5 +525,6 @@ def do_update() -> dict:
 
     result["success"] = True
     result["version"] = new_version
-    result["message"] = f"更新成功 → v{new_version}，已重启 {len(restarted)} 个服务"
+    result["message"] = (f"更新成功 → v{new_version}，已重启 {len(restarted)} 个服务"
+                         + (f"，同步 {units_synced} 个 systemd 单元" if units_synced else ""))
     return result

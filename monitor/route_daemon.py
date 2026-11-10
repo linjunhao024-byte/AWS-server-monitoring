@@ -94,7 +94,13 @@ def run_monitor(target: str, interval: int, output_dir: str):
         print(f"[{now_iso()}] 正在 traceroute {target} ...")
         hops = run_traceroute(target)
 
-        if prev_hops is not None:
+        if not hops:
+            # traceroute 超时 / 被过滤：这不是"路由变了"，只是这次没探测到。
+            # 基线必须保持不动，否则一次失败就把基线清空，恢复后会被判成
+            # "所有节点都消失了"。
+            print(f"[{now_iso()}] traceroute 无结果，跳过本次路由比较（基线保持不动）")
+            log_route(output_dir, target, hops, None)
+        elif prev_hops is not None:
             diff = compare_routes(prev_hops, hops)
             if diff["changed"]:
                 confirm_counter += 1
@@ -131,7 +137,8 @@ def run_monitor(target: str, interval: int, output_dir: str):
             log_route(output_dir, target, hops, None)
             print(f"[{now_iso()}] 📝 基线路径已记录 ({len(hops)} 跳)")
 
-        prev_hops = hops
+        if hops:
+            prev_hops = hops
 
         for _ in range(interval):
             if not is_running():

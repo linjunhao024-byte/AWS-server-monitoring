@@ -24,6 +24,13 @@ from stats import percentile, basic_stats, bucket_distribution
 from utils import format_duration
 
 
+# 低于这个速率（Mbps，双向取小）视为"没流量"，不计入钳位统计。
+# 1Hz 采样下 0.1 Mbps ≈ 12.5 KB/s，属于典型的空闲服务器噪声水平。
+IDLE_MBPS = 0.1
+# 判定"被限速"时要回看的窗口：必须在掉速前这段时间里跑出过明显用量
+BURST_LOOKBACK_SEC = 600
+
+
 # ---------------------------------------------------------------------------
 # 数据加载
 # ---------------------------------------------------------------------------
@@ -107,12 +114,15 @@ def find_files_in_dir(data_dir: str = None, interface: str = None) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def detect_events(rows: list[dict], threshold_mbps: float, min_duration: int,
-                  direction: str) -> list[dict]:
+                  direction: str, min_value: float = None) -> list[dict]:
     """
     检测连续事件（突发或钳位）。
 
     direction: "above" — 寻找 > threshold 的连续区间（突发）
                "below" — 寻找 < threshold 的连续区间（钳位）
+    min_value: 仅对 "below" 生效的下界（开区间）。低于它的采样视为"空闲"，
+               不并入钳位区间——闲置的服务器长期低于基线，但那是没流量，
+               不是被运营商限速。
     """
     events = []
     in_event = False
@@ -126,6 +136,8 @@ def detect_events(rows: list[dict], threshold_mbps: float, min_duration: int,
         else:
             val = min(row["rx_mbps"], row["tx_mbps"])
             condition = val < threshold_mbps
+            if min_value is not None and val <= min_value:
+                condition = False
 
         if condition:
             if not in_event:
@@ -171,7 +183,8 @@ def _rows_in_range(rows: list[dict], timestamps: list[datetime.datetime],
 def infer_credit_cycle(rows: list[dict], timestamps: list[datetime.datetime],
                        burst_events: list[dict],
                        throttle_events: list[dict],
-                       sustainable_rx: float, sustainable_tx: float) -> dict:
+                       sustainable_rx: float, sustainable_tx: float,
+                       idle_seconds: int = 0) -> dict:
     """推断积分积累和消耗周期。"""
     result = {
         "total_burst_count": len(burst_events),
@@ -180,7 +193,8 @@ def infer_credit_cycle(rows: list[dict], timestamps: list[datetime.datetime],
         "max_burst_duration_sec": 0,
         "avg_throttle_duration_sec": 0,
         "max_throttle_duration_sec": 0,
-        "estimated_daily_credit_gb": 0.0,
+        "excess_total_mb": 0.0,
+        "idle_duration_sec": idle_seconds,
         "burst_to_throttle_pattern": "unknown",
     }
 
@@ -194,14 +208,14 @@ def infer_credit_cycle(rows: list[dict], timestamps: list[datetime.datetime],
         result["avg_throttle_duration_sec"] = round(statistics.mean(durations))
         result["max_throttle_duration_sec"] = max(durations)
 
-    # 估算日积分预算：突发期间超出基线的总流量
+    # 突发期间超出基线的累计流量（不是"每日额度"：跨多天分析时它是总量）
     total_excess_bytes = 0
     for evt in burst_events:
         for row in _rows_in_range(rows, timestamps, evt["start"], evt["end"]):
             excess_rx = max(0, row["rx_mbps"] - sustainable_rx)
             excess_tx = max(0, row["tx_mbps"] - sustainable_tx)
             total_excess_bytes += (excess_rx + excess_tx) * 0.125
-    result["estimated_daily_credit_mb"] = round(total_excess_bytes, 1)
+    result["excess_total_mb"] = round(total_excess_bytes, 1)
 
     # 模式推断
     if len(throttle_events) == 0:
@@ -238,8 +252,30 @@ def reverse_engineer_credits(rows: list[dict]) -> dict:
     burst_ceiling_tx = round(percentile(tx_vals, 95), 4)
 
     # Step C: 钳位检测
+    #
+    # 原实现是"任何低于 基线×1.2 且持续 ≥60s 的区间都算钳位"，结果一台闲置的
+    # 服务器（夜里几小时只有几十 kbps）会被判成"累计被限速 11 小时"。
+    # 这里加两道闸：
+    #   1) 低于 IDLE_MBPS 的采样属于空闲，直接排除在钳位区间之外；
+    #   2) 钳位之前 10 分钟内必须真的跑出过明显高于基线的流量
+    #      （先跑满 → 后掉速，才是限速特征）。
     throttle_threshold = max(sustainable_rx, sustainable_tx) * 1.2
-    throttle_events = detect_events(rows, throttle_threshold, 60, "below")
+    throttle_candidates = detect_events(rows, throttle_threshold, 60, "below",
+                                        min_value=IDLE_MBPS)
+
+    active_floor = max(sustainable_rx, sustainable_tx) * 3
+    throttle_events = []
+    for evt in throttle_candidates:
+        look_start = evt["start"] - datetime.timedelta(seconds=BURST_LOOKBACK_SEC)
+        window = _rows_in_range(rows, timestamps, look_start, evt["start"])
+        if not window:
+            continue
+        if max(max(r["rx_mbps"], r["tx_mbps"]) for r in window) < active_floor:
+            # 掉速之前本来就是低速/空闲，没有"被限速"可谈
+            continue
+        throttle_events.append(evt)
+
+    idle_seconds = sum(1 for r in rows if min(r["rx_mbps"], r["tx_mbps"]) <= IDLE_MBPS)
 
     if throttle_events:
         throttle_floor_vals = []
@@ -257,7 +293,8 @@ def reverse_engineer_credits(rows: list[dict]) -> dict:
     # Step E: 积分周期推断
     credit_inference = infer_credit_cycle(rows, timestamps, burst_events,
                                           throttle_events,
-                                          sustainable_rx, sustainable_tx)
+                                          sustainable_rx, sustainable_tx,
+                                          idle_seconds)
 
     return {
         "sustainable_rx": sustainable_rx,
@@ -265,6 +302,7 @@ def reverse_engineer_credits(rows: list[dict]) -> dict:
         "burst_ceiling_rx": burst_ceiling_rx,
         "burst_ceiling_tx": burst_ceiling_tx,
         "throttle_floor": throttle_floor,
+        "idle_duration_sec": idle_seconds,
         "burst_events": burst_events,
         "throttle_events": throttle_events,
         "credit_inference": credit_inference,
@@ -365,12 +403,13 @@ def generate_report(rows: list[dict], analysis: dict,
 - **突发次数**: {ci['total_burst_count']} 次
 - **平均持续**: {format_duration(ci['avg_burst_duration_sec'])}
 - **最长突发**: {format_duration(ci['max_burst_duration_sec'])}
-- **估算日超额流量**: {ci['estimated_daily_credit_mb']} MB
+- **估算日超额流量**: {ci['excess_total_mb']} MB
 
 ## 🔒 钳位事件统计
 - **钳位次数**: {ci['total_throttle_count']} 次
 - **平均持续**: {format_duration(ci['avg_throttle_duration_sec'])}
 - **最长钳位**: {format_duration(ci['max_throttle_duration_sec'])}
+- **空闲时长**: {format_duration(ci['idle_duration_sec'])}（不计入钳位）
 
 ## 📈 积分模式推断
 - **判断**: {ci['burst_to_throttle_pattern']}
@@ -662,7 +701,8 @@ def build_llm_prompt(analysis: dict, rx_stats: dict, tx_stats: dict,
 - 平均突发持续: {ci['avg_burst_duration_sec']}秒, 最长: {ci['max_burst_duration_sec']}秒
 - 钳位总次数: {ci['total_throttle_count']}
 - 平均钳位持续: {ci['avg_throttle_duration_sec']}秒, 最长: {ci['max_throttle_duration_sec']}秒
-- 估算日超额流量: {ci['estimated_daily_credit_mb']} MB
+- 空闲总时长: {ci['idle_duration_sec']}秒（已从钳位统计中排除）
+- 突发期间超出基线的累计流量: {ci['excess_total_mb']} MB
 
 ---
 

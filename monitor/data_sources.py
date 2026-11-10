@@ -175,6 +175,11 @@ def compare_routes(old: list[str], new: list[str]) -> dict:
     比较两次路由路径，返回变化详情。
     只比较 IP 地址，忽略 hop 编号差异。
     """
+    # 任一侧为空说明探测失败（超时 / 被过滤），这不是"路由变了"。
+    # 早期实现会把它当成"所有节点都消失了"，一次 traceroute 超时就误报。
+    if not old or not new:
+        return {"changed": False, "probe_failed": True}
+
     # 提取纯 IP 列表（忽略 hop 编号）
     old_ips = [h.split()[1] if " " in h else h for h in old]
     new_ips = [h.split()[1] if " " in h else h for h in new]
@@ -229,7 +234,9 @@ def get_vnstat_json(interface: str = None) -> dict | None:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
         if result.returncode != 0:
-            # 尝试不指定网卡
+            # 老版本 vnstat 不支持 -i：退回全局调用，但**解析层必须严格按网卡名
+            # 匹配**，绝不静默取 interfaces[0] —— 多网卡机器上那会把别的网卡
+            # 的流量算进主网卡，数字看着正常却全是错的。
             cmd = ["vnstat", "--json", "d"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
@@ -262,29 +269,41 @@ def parse_vnstat_data(data: dict, interface: str = None) -> dict:
     if not interfaces:
         return {}
 
-    # 查找目标网卡
+    # 严格按网卡名匹配：找不到就返回空，绝不猜"第一个网卡"
     target_iface = None
     for iface in interfaces:
         if iface.get("name") == interface:
             target_iface = iface
             break
 
-    if not target_iface and len(interfaces) > 0:
-        target_iface = interfaces[0]
-
     if not target_iface:
+        available = ", ".join(str(i.get("name")) for i in interfaces)
+        print(f"[警告] vnstat 数据里没有网卡 {interface}（现有: {available}），"
+              f"本次不做流量统计", file=sys.stderr)
         return {}
 
     traffic = target_iface.get("traffic", {})
-    days = traffic.get("day", [])
+    days = traffic.get("day") or []
 
     daily_dict = {}
     for day in days:
-        date = day.get("date", {})
-        date_str = f"{date.get('year')}-{date.get('month'):02d}-{date.get('day'):02d}"
-        daily_dict[date_str] = {
-            "rx": day.get("rx", 0),
-            "tx": day.get("tx", 0),
-        }
+        date = day.get("date") or {}
+        try:
+            y = int(date.get("year") or 0)
+            m = int(date.get("month") or 0)
+            d = int(date.get("day") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not (y and m and d):
+            # vnstat 在某些版本/月初会省略 date 子字段，
+            # 早期实现直接 f"{None:02d}" 抛 TypeError 把日报整条打崩
+            continue
+        date_str = f"{y}-{m:02d}-{d:02d}"
+        try:
+            rx = int(day.get("rx") or 0)
+            tx = int(day.get("tx") or 0)
+        except (TypeError, ValueError):
+            rx, tx = 0, 0
+        daily_dict[date_str] = {"rx": rx, "tx": tx}
 
     return daily_dict

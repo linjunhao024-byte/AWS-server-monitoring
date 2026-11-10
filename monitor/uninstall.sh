@@ -196,7 +196,11 @@ if $PURGE; then
     echo ""
     step_title "删除数据目录 (--purge)"
     step_sep
-    if [ -d "$DATA_DIR" ]; then
+    # 流量历史是这个项目唯一不可重建的资产，删了就没了：再确认一次
+    if ! ask_yes_no "确认永久删除 ${DATA_DIR} 里的全部流量历史？" "n"; then
+        step_row "${YELLOW}已跳过：数据目录保留${NC}"
+        step_row "${DIM}可稍后手动删除: rm -rf ${DATA_DIR}${NC}"
+    elif [ -d "$DATA_DIR" ]; then
         rm -rf "$DATA_DIR"
         step_row "${GREEN}✓ 已删除: ${DATA_DIR}${NC}"
     else

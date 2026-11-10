@@ -8,6 +8,9 @@ ExecStart=/usr/bin/python3 /opt/bandwidth_monitor/notifications.py --daily-repor
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=daily-report
+# ProtectHome 下 matplotlib 无法在 $HOME 建字体缓存，指到可写的私有 /tmp，
+# 否则周报趋势图会静默退化成纯 ASCII
+Environment=MPLCONFIGDIR=/tmp/linmon-mpl
 
 NoNewPrivileges=yes
 ProtectSystem=strict

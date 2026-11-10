@@ -97,6 +97,38 @@ class DailyCSVWriter:
         self._peak_tx = {"value": 0.0, "time": "N/A"}
         self._peak_rx = {"value": 0.0, "time": "N/A"}
         self._total_records = 0
+        if file_exists:
+            # 同一天内服务重启过：接续已有的计数和峰值，
+            # 否则当天摘要只会反映最后一次运行的数据
+            self._reload_stats()
+
+    def _reload_stats(self):
+        """从已存在的当天文件里重建采样数 / 峰值。"""
+        try:
+            with open(self._file_path(), "r", encoding="utf-8") as f:
+                f.readline()  # 表头
+                for line in f:
+                    if line.startswith("#") or not line.strip():
+                        continue
+                    parts = line.rstrip("\r\n").split(",")
+                    if len(parts) < len(self.HEADER):
+                        continue
+                    try:
+                        rx = float(parts[1])
+                        tx = float(parts[2])
+                    except ValueError:
+                        continue
+                    self._total_records += 1
+                    if tx > self._peak_tx["value"]:
+                        self._peak_tx = {"value": tx, "time": parts[0]}
+                    if rx > self._peak_rx["value"]:
+                        self._peak_rx = {"value": rx, "time": parts[0]}
+        except OSError:
+            pass
+
+    def current_label(self) -> str:
+        """当前正在写入的日期标签（YYYYMMDD）。"""
+        return self._date_label
 
     def write_row(self, row: dict):
         """写入一行数据，同时更新峰值追踪。"""
@@ -112,25 +144,32 @@ class DailyCSVWriter:
     def flush_and_rotate(self) -> str:
         """写入峰值摘要 → 关闭文件 → 返回文件路径。"""
         path = self._file_path()
-        self._file.write("\n# ===== DAILY SUMMARY (LIN-Monitor) =====\n")
-        self._file.write(f"# date: {self._date_label}\n")
-        self._file.write(f"# interface: {self._interface}\n")
-        self._file.write(f"# total_records: {self._total_records}\n")
-        self._file.write(f"# peak_tx_mbps: {self._peak_tx['value']}\n")
-        self._file.write(f"# peak_tx_time: {self._peak_tx['time']}\n")
-        self._file.write(f"# peak_rx_mbps: {self._peak_rx['value']}\n")
-        self._file.write(f"# peak_rx_time: {self._peak_rx['time']}\n")
-        self._file.write("# ===== END SUMMARY =====\n")
-        self._file.close()
+        if self._file and self._total_records > 0:
+            self._file.write("\n# ===== DAILY SUMMARY (LIN-Monitor) =====\n")
+            self._file.write(f"# date: {self._date_label}\n")
+            self._file.write(f"# interface: {self._interface}\n")
+            self._file.write(f"# total_records: {self._total_records}\n")
+            self._file.write(f"# peak_tx_mbps: {self._peak_tx['value']}\n")
+            self._file.write(f"# peak_tx_time: {self._peak_tx['time']}\n")
+            self._file.write(f"# peak_rx_mbps: {self._peak_rx['value']}\n")
+            self._file.write(f"# peak_rx_time: {self._peak_rx['time']}\n")
+            self._file.write("# ===== END SUMMARY =====\n")
+        if self._file:
+            self._file.close()
         self._file = None
         self._writer = None
         return path
 
-    def rotate_for_new_day(self):
-        """日期变更后切换到新文件。"""
+    def rotate_for_new_day(self, label: str = None):
+        """切换到指定日期的文件。
+
+        label 由调用方传入（就是"现在"的日期），不再自己读时钟 ——
+        否则在 23:59 切完、跨过零点后写进来的其实是次日数据，
+        却还挂在当天的文件名上。
+        """
         if self._file:
             self.flush_and_rotate()
-        self._date_label = today_label()
+        self._date_label = label or today_label()
         self._open_new_file()
 
     def close(self):
@@ -145,15 +184,28 @@ class DailyCSVWriter:
 # ---------------------------------------------------------------------------
 # 日切检查
 # ---------------------------------------------------------------------------
+# 不再用 "23:59 这一分钟精确命中" 的方式判断日切：1Hz 循环只要被 IO / ping
+# 线程 / GC 拖过那一分钟，当天就不会切文件。改成比较"当前日期是否已变化"，
+# 任何时刻恢复循环都能立刻补上切换。
 
-DAILY_CUT_HOUR = 23
-DAILY_CUT_MINUTE = 59
+
+def needs_rotation(current_label: str) -> bool:
+    """当前日期与文件标签不一致就需要切文件。"""
+    return today_label() != current_label
 
 
-def is_daily_cut_time() -> bool:
-    """判断当前时刻是否到达日切时间 23:59。"""
-    now = datetime.datetime.now()
-    return now.hour == DAILY_CUT_HOUR and now.minute == DAILY_CUT_MINUTE
+def compute_deltas(cur_rx: int, cur_tx: int, prev_rx: int, prev_tx: int):
+    """计算两次采样之间的字节增量。
+
+    返回 (rx_delta, tx_delta)；任一方向出现负增量说明 64 位计数器被重置
+    （重启 / 网卡 reset），此时返回 None —— 这一秒的速率不可信，
+    不能按 32 位回绕硬凑，否则会写出一个巨大的假峰值。
+    """
+    rx_delta = cur_rx - prev_rx
+    tx_delta = cur_tx - prev_tx
+    if rx_delta < 0 or tx_delta < 0:
+        return None
+    return rx_delta, tx_delta
 
 
 # ---------------------------------------------------------------------------
@@ -195,12 +247,17 @@ def run_monitor(interface: str, output_dir: str):
             writer.close()
             sys.exit(1)
 
-        rx_delta = cur_rx - prev_rx
-        tx_delta = cur_tx - prev_tx
-        if rx_delta < 0:
-            rx_delta += 2**32
-        if tx_delta < 0:
-            tx_delta += 2**32
+        # 64 位计数器在重启 / 网卡重置 / 驱动 reload 后会归零，差值为负。
+        # 这里不能按 2^32 回绕（Linux 还在 64 位空间），否则会写入巨大的负速率
+        # 污染当天的峰值与积分反推：本次采样直接丢弃并重新对齐基线。
+        deltas = compute_deltas(cur_rx, cur_tx, prev_rx, prev_tx)
+        if deltas is None:
+            print(f"[{now_iso()}] 计数器重置（rx {prev_rx}→{cur_rx} / tx "
+                  f"{prev_tx}→{cur_tx}），本次采样跳过", file=sys.stderr)
+            prev_rx, prev_tx = cur_rx, cur_tx
+            prev_time = now_mono
+            continue
+        rx_delta, tx_delta = deltas
 
         rx_mbps = bytes_to_mbps(rx_delta, elapsed)
         tx_mbps = bytes_to_mbps(tx_delta, elapsed)
@@ -215,11 +272,11 @@ def run_monitor(interface: str, output_dir: str):
 
         ts = now_iso()
 
-        if is_daily_cut_time():
-            path = writer.flush_and_rotate()
-            print(f"[{ts}] 日切完成 → {path}")
-            writer.rotate_for_new_day()
-            time.sleep(61)
+        if needs_rotation(writer.current_label()):
+            today = today_label()
+            prev_path = writer.flush_and_rotate()
+            print(f"[{ts}] 日切完成 → {prev_path}")
+            writer.rotate_for_new_day(today)
             prev_rx = read_counter(interface, "rx_bytes")
             prev_tx = read_counter(interface, "tx_bytes")
             prev_time = time.monotonic()

@@ -19,7 +19,9 @@ LOGO_TAGLINE = "Advanced Cloud State Guardian"
 LOGO_VERSION_LINE = "Advanced Cloud State Guardian"
 
 # 关于页专用 Logo（纯文本，抗变形）
-LOGO_ABOUT = """\
+# 用 raw string：图形里的反斜杠不需要转义，否则 Python 会报
+# "invalid escape sequence '\ '"（3.12+ 每次启动都刷警告）
+LOGO_ABOUT = r"""\
   +=========================================+
   |                                         |
   |         _     ___  _   _                |
