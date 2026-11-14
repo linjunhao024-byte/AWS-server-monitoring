@@ -418,3 +418,13 @@ ppp* · wg* · CloudflareWARP · warp* · zt* · tailscale* · utun*
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0f0f0f,50:fce300,100:00f0ff&height=120&section=footer&fontColor=fce300&animation=twinkling" width="100%"/>
 
 </div>
+
+## 跑测试
+
+离线回归测试在 `tests/`：不联网、不调 `systemctl`、不写 `/etc`、不跑 `install`/`uninstall`，外部依赖（requests / urlopen / subprocess / shutil.disk_usage）全部 mock。
+
+```bash
+python tests/_aws_p2_tests.py
+```
+
+全绿时退出码 0。覆盖：采样改单调时钟防漂移、在线更新超时/校验/回滚、通知按真实结果报成败、Telegram 轮询错误分类、日报磁盘路径不再硬编码、开机自启检查返回码、`TG_CHAT_ID` 为空时拒绝回调。
