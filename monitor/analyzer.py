@@ -19,7 +19,7 @@ import bisect
 import datetime
 import statistics
 
-from config import DATA_DIR, INTERFACE, BUCKETS
+from config import DATA_DIR, INTERFACE, BUCKETS, get_ping_gw
 from stats import percentile, basic_stats, bucket_distribution
 from utils import format_duration
 
@@ -35,12 +35,21 @@ BURST_LOOKBACK_SEC = 600
 # 数据加载
 # ---------------------------------------------------------------------------
 
-def load_csv_files(file_paths: list[str]) -> list[dict]:
-    """
-    加载一个或多个 CSV 文件，跳过 # 开头的注释行。
-    返回按时间排序的记录列表。
-    """
-    rows = []
+def _parse_optional_float(value):
+    """解析可空的浮点列；空串/None/NaN 都视为“未知”，不丢弃整行。"""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in ("none", "nan", "n/a"):
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _iter_csv_records(file_paths: list[str]):
+    """逐文件、逐行读取 CSV；这是流式入口，不会把全部行留在内存。"""
     for path in file_paths:
         if not os.path.exists(path):
             print(f"[WARN] 文件不存在，跳过: {path}", file=sys.stderr)
@@ -60,15 +69,107 @@ def load_csv_files(file_paths: list[str]) -> list[dict]:
                         "cpu_load_1m": float(row["cpu_load_1m"]),
                     }
                     if "rtt_gw_ms" in row:
-                        record["rtt_gw_ms"] = float(row["rtt_gw_ms"])
-                        record["rtt_ext_ms"] = float(row["rtt_ext_ms"])
-                        record["loss_gw_pct"] = float(row["loss_gw_pct"])
-                        record["loss_ext_pct"] = float(row["loss_ext_pct"])
-                    rows.append(record)
+                        record["rtt_gw_ms"] = _parse_optional_float(row.get("rtt_gw_ms"))
+                        record["rtt_ext_ms"] = _parse_optional_float(row.get("rtt_ext_ms"))
+                        record["loss_gw_pct"] = _parse_optional_float(row.get("loss_gw_pct"))
+                        record["loss_ext_pct"] = _parse_optional_float(row.get("loss_ext_pct"))
+                    yield record
                 except (ValueError, KeyError):
                     continue
+
+
+def load_csv_files(file_paths: list[str]) -> list[dict]:
+    """
+    加载一个或多个 CSV 文件，跳过 # 开头的注释行。
+    返回按时间排序的记录列表。
+    """
+    rows = list(_iter_csv_records(file_paths))
     rows.sort(key=lambda r: r["timestamp"])
     return rows
+
+
+def load_csv_hourly(file_paths: list[str], max_days: int = 30):
+    """
+    流式读取多个 CSV，并按小时聚合成少量记录。
+
+    每个输出点：
+      timestamp(小时起点), rx_mbps(平均), tx_mbps(平均), cpu_load_1m(平均),
+      rx_max_mbps, tx_max_mbps, samples(样本数), 以及可选的延迟/丢包平均值。
+
+    返回 (rows, meta)；meta 含 files/truncated/total_samples。
+    这样 30 天 1Hz 数据也只保留 ≤ 天数×24 个点，不会把 259 万行读进内存。
+    """
+    paths = list(file_paths)
+    truncated = len(paths) > max_days
+    if truncated:
+        paths = paths[-max_days:]
+
+    buckets = {}
+    total_samples = 0
+    for rec in _iter_csv_records(paths):
+        hour = rec["timestamp"].replace(minute=0, second=0, microsecond=0)
+        b = buckets.get(hour)
+        if b is None:
+            b = {
+                "n": 0, "sum_rx": 0.0, "sum_tx": 0.0, "sum_cpu": 0.0,
+                "max_rx": 0.0, "max_tx": 0.0, "max_cpu": 0.0,
+                "rtt_gw_sum": 0.0, "rtt_gw_n": 0,
+                "rtt_ext_sum": 0.0, "rtt_ext_n": 0,
+                "loss_gw_sum": 0.0, "loss_gw_n": 0,
+                "loss_ext_sum": 0.0, "loss_ext_n": 0,
+            }
+            buckets[hour] = b
+        rx, tx, cpu = rec["rx_mbps"], rec["tx_mbps"], rec["cpu_load_1m"]
+        b["n"] += 1
+        b["sum_rx"] += rx
+        b["sum_tx"] += tx
+        b["sum_cpu"] += cpu
+        b["max_rx"] = max(b["max_rx"], rx)
+        b["max_tx"] = max(b["max_tx"], tx)
+        b["max_cpu"] = max(b["max_cpu"], cpu)
+        rtt_gw = rec.get("rtt_gw_ms")
+        if rtt_gw is not None and rtt_gw > 0:
+            b["rtt_gw_sum"] += rtt_gw
+            b["rtt_gw_n"] += 1
+        rtt_ext = rec.get("rtt_ext_ms")
+        if rtt_ext is not None and rtt_ext > 0:
+            b["rtt_ext_sum"] += rtt_ext
+            b["rtt_ext_n"] += 1
+        loss_gw = rec.get("loss_gw_pct")
+        if loss_gw is not None:
+            b["loss_gw_sum"] += loss_gw
+            b["loss_gw_n"] += 1
+        loss_ext = rec.get("loss_ext_pct")
+        if loss_ext is not None:
+            b["loss_ext_sum"] += loss_ext
+            b["loss_ext_n"] += 1
+        total_samples += 1
+
+    rows = []
+    for hour in sorted(buckets.keys()):
+        b = buckets[hour]
+        n = b["n"]
+        rec = {
+            "timestamp": hour,
+            "rx_mbps": round(b["sum_rx"] / n, 6),
+            "tx_mbps": round(b["sum_tx"] / n, 6),
+            "cpu_load_1m": round(b["sum_cpu"] / n, 6),
+            "rx_max_mbps": round(b["max_rx"], 6),
+            "tx_max_mbps": round(b["max_tx"], 6),
+            "cpu_max": round(b["max_cpu"], 6),
+            "samples": n,
+        }
+        rec["rtt_gw_ms"] = round(b["rtt_gw_sum"] / b["rtt_gw_n"], 2) if b["rtt_gw_n"] else None
+        rec["rtt_ext_ms"] = round(b["rtt_ext_sum"] / b["rtt_ext_n"], 2) if b["rtt_ext_n"] else None
+        rec["loss_gw_pct"] = round(b["loss_gw_sum"] / b["loss_gw_n"], 2) if b["loss_gw_n"] else None
+        rec["loss_ext_pct"] = round(b["loss_ext_sum"] / b["loss_ext_n"], 2) if b["loss_ext_n"] else None
+        rows.append(rec)
+
+    return rows, {
+        "files": len(paths),
+        "truncated": truncated,
+        "total_samples": total_samples,
+    }
 
 
 def find_latest_file(data_dir: str = None, interface: str = None) -> str | None:
@@ -113,6 +214,14 @@ def find_files_in_dir(data_dir: str = None, interface: str = None) -> list[str]:
 # 积分机制反推算法
 # ---------------------------------------------------------------------------
 
+def _row_samples(row: dict) -> int:
+    """一行代表的秒数；小时聚合行用 samples 还原，1Hz 行按 1 秒算。"""
+    try:
+        return max(1, int(row.get("samples", 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
 def detect_events(rows: list[dict], threshold_mbps: float, min_duration: int,
                   direction: str, min_value: float = None) -> list[dict]:
     """
@@ -128,6 +237,7 @@ def detect_events(rows: list[dict], threshold_mbps: float, min_duration: int,
     in_event = False
     event_start = None
     event_values = []
+    event_samples = 0
 
     for row in rows:
         if direction == "above":
@@ -144,10 +254,12 @@ def detect_events(rows: list[dict], threshold_mbps: float, min_duration: int,
                 in_event = True
                 event_start = row["timestamp"]
                 event_values = []
+                event_samples = 0
             event_values.append(val)
+            event_samples += _row_samples(row)
         else:
-            if in_event and len(event_values) >= min_duration:
-                duration = len(event_values)
+            if in_event and event_samples >= min_duration:
+                duration = event_samples
                 events.append({
                     "start": event_start,
                     "end": event_start + datetime.timedelta(seconds=duration - 1),
@@ -157,10 +269,11 @@ def detect_events(rows: list[dict], threshold_mbps: float, min_duration: int,
                 })
             in_event = False
             event_values = []
+            event_samples = 0
 
     # 处理末尾事件
-    if in_event and len(event_values) >= min_duration:
-        duration = len(event_values)
+    if in_event and event_samples >= min_duration:
+        duration = event_samples
         events.append({
             "start": event_start,
             "end": event_start + datetime.timedelta(seconds=duration - 1),
@@ -214,7 +327,8 @@ def infer_credit_cycle(rows: list[dict], timestamps: list[datetime.datetime],
         for row in _rows_in_range(rows, timestamps, evt["start"], evt["end"]):
             excess_rx = max(0, row["rx_mbps"] - sustainable_rx)
             excess_tx = max(0, row["tx_mbps"] - sustainable_tx)
-            total_excess_bytes += (excess_rx + excess_tx) * 0.125
+            # 1Hz 行 samples=1；小时聚合行要乘回它代表的秒数。
+            total_excess_bytes += (excess_rx + excess_tx) * 0.125 * _row_samples(row)
     result["excess_total_mb"] = round(total_excess_bytes, 1)
 
     # 模式推断
@@ -275,7 +389,10 @@ def reverse_engineer_credits(rows: list[dict]) -> dict:
             continue
         throttle_events.append(evt)
 
-    idle_seconds = sum(1 for r in rows if min(r["rx_mbps"], r["tx_mbps"]) <= IDLE_MBPS)
+    idle_seconds = sum(
+        _row_samples(r) for r in rows
+        if min(r["rx_mbps"], r["tx_mbps"]) <= IDLE_MBPS
+    )
 
     if throttle_events:
         throttle_floor_vals = []
@@ -338,7 +455,8 @@ def ascii_bar_chart(distribution: list[dict], max_width: int = 30,
 # ---------------------------------------------------------------------------
 
 def generate_report(rows: list[dict], analysis: dict,
-                    file_paths: list[str]) -> str:
+                    file_paths: list[str], total_samples: int = None,
+                    aggregated: bool = False) -> str:
     """生成 Markdown 格式的分析报告。"""
     rx_vals = [r["rx_mbps"] for r in rows]
     tx_vals = [r["tx_mbps"] for r in rows]
@@ -347,6 +465,10 @@ def generate_report(rows: list[dict], analysis: dict,
     rx_stats = basic_stats(rx_vals, "Rx (下行)")
     tx_stats = basic_stats(tx_vals, "Tx (上行)")
     cpu_stats = basic_stats(cpu_vals, "CPU Load")
+    # 聚合行的均值用于统计，真实峰值单独取每小时最大值。
+    rx_stats["max"] = max(r.get("rx_max_mbps", r["rx_mbps"]) for r in rows)
+    tx_stats["max"] = max(r.get("tx_max_mbps", r["tx_mbps"]) for r in rows)
+    cpu_stats["max"] = max(r.get("cpu_max", r["cpu_load_1m"]) for r in rows)
 
     rx_dist = bucket_distribution(rx_vals, BUCKETS)
     tx_dist = bucket_distribution(tx_vals, BUCKETS)
@@ -362,7 +484,7 @@ def generate_report(rows: list[dict], analysis: dict,
 ## 📅 分析周期
 - **起止时间**: {first_ts} ~ {last_ts}
 - **跨度**: {days:.1f} 天
-- **数据量**: {len(rows):,} 条采样
+- **数据量**: {total_samples if total_samples is not None else len(rows):,} 条采样{('（流式聚合为 %s 个小时点）' % format(len(rows), ',')) if aggregated else ''}
 - **文件数**: {len(file_paths)}
 
 ---
@@ -428,10 +550,15 @@ def generate_report(rows: list[dict], analysis: dict,
     # 延迟统计（新版 CSV 才有）
     has_latency = "rtt_gw_ms" in rows[0]
     if has_latency:
-        rtt_gw_vals = [r["rtt_gw_ms"] for r in rows if r["rtt_gw_ms"] > 0]
-        rtt_ext_vals = [r["rtt_ext_ms"] for r in rows if r["rtt_ext_ms"] > 0]
-        loss_gw_vals = [r["loss_gw_pct"] for r in rows]
-        loss_ext_vals = [r["loss_ext_pct"] for r in rows]
+        rtt_gw_vals = [r["rtt_gw_ms"] for r in rows
+                       if r.get("rtt_gw_ms") is not None and r["rtt_gw_ms"] > 0]
+        rtt_ext_vals = [r["rtt_ext_ms"] for r in rows
+                        if r.get("rtt_ext_ms") is not None and r["rtt_ext_ms"] > 0]
+        loss_gw_vals = [r["loss_gw_pct"] for r in rows
+                        if r.get("loss_gw_pct") is not None]
+        loss_ext_vals = [r["loss_ext_pct"] for r in rows
+                         if r.get("loss_ext_pct") is not None]
+        gw_label = get_ping_gw() or "未识别"
 
         if rtt_gw_vals or rtt_ext_vals:
             rtt_gw_stats = basic_stats(rtt_gw_vals, "RTT GW") if rtt_gw_vals else {}
@@ -446,7 +573,8 @@ def generate_report(rows: list[dict], analysis: dict,
                 ext_std = statistics.stdev(rtt_ext_vals)
                 spike_threshold = ext_mean + 3 * ext_std
                 for row in rows:
-                    if row.get("rtt_ext_ms", 0) > spike_threshold and row["rtt_ext_ms"] > 0:
+                    rtt_ext = row.get("rtt_ext_ms")
+                    if rtt_ext is not None and rtt_ext > spike_threshold and rtt_ext > 0:
                         latency_spikes.append({
                             "time": row["timestamp"].strftime("%m-%d %H:%M:%S"),
                             "rtt_ext": row["rtt_ext_ms"],
@@ -460,7 +588,7 @@ def generate_report(rows: list[dict], analysis: dict,
 
 ## 📡 延迟统计
 
-| 指标 | AWS 网关 (内网) | 公网 (114.114.114.114) |
+| 指标 | AWS 网关 ({gw_label}) | 公网 (114.114.114.114) |
 |------|-----------------|----------------------|
 | 均值 | {rtt_gw_stats.get('mean', 'N/A')} ms | {rtt_ext_stats.get('mean', 'N/A')} ms |
 | 中位数 | {rtt_gw_stats.get('median', 'N/A')} ms | {rtt_ext_stats.get('median', 'N/A')} ms |
@@ -503,11 +631,13 @@ def generate_report(rows: list[dict], analysis: dict,
             d = row["timestamp"].strftime("%Y-%m-%d")
             if d not in daily:
                 daily[d] = {"rx": 0, "tx": 0, "cpu": 0, "rtt_ext": 0}
-            daily[d]["rx"] = max(daily[d]["rx"], row["rx_mbps"])
-            daily[d]["tx"] = max(daily[d]["tx"], row["tx_mbps"])
-            daily[d]["cpu"] = max(daily[d]["cpu"], row["cpu_load_1m"])
+            daily[d]["rx"] = max(daily[d]["rx"], row.get("rx_max_mbps", row["rx_mbps"]))
+            daily[d]["tx"] = max(daily[d]["tx"], row.get("tx_max_mbps", row["tx_mbps"]))
+            daily[d]["cpu"] = max(daily[d]["cpu"], row.get("cpu_max", row["cpu_load_1m"]))
             if has_latency:
-                daily[d]["rtt_ext"] = max(daily[d]["rtt_ext"], row.get("rtt_ext_ms", 0))
+                rtt_ext = row.get("rtt_ext_ms")
+                if rtt_ext is not None:
+                    daily[d]["rtt_ext"] = max(daily[d]["rtt_ext"], rtt_ext)
         for d in sorted(daily.keys()):
             v = daily[d]
             if has_latency:
@@ -527,21 +657,27 @@ def _build_latency_prompt_section(rows: list[dict]) -> str:
     if not rows or "rtt_gw_ms" not in rows[0]:
         return ""
 
-    rtt_gw_vals = [r["rtt_gw_ms"] for r in rows if r["rtt_gw_ms"] > 0]
-    rtt_ext_vals = [r["rtt_ext_ms"] for r in rows if r["rtt_ext_ms"] > 0]
-    loss_gw_vals = [r["loss_gw_pct"] for r in rows]
-    loss_ext_vals = [r["loss_ext_pct"] for r in rows]
+    rtt_gw_vals = [r["rtt_gw_ms"] for r in rows
+                   if r.get("rtt_gw_ms") is not None and r["rtt_gw_ms"] > 0]
+    rtt_ext_vals = [r["rtt_ext_ms"] for r in rows
+                    if r.get("rtt_ext_ms") is not None and r["rtt_ext_ms"] > 0]
+    loss_gw_vals = [r["loss_gw_pct"] for r in rows
+                    if r.get("loss_gw_pct") is not None]
+    loss_ext_vals = [r["loss_ext_pct"] for r in rows
+                     if r.get("loss_ext_pct") is not None]
+
+    gw_label = get_ping_gw() or "未识别"
 
     if not rtt_gw_vals and not rtt_ext_vals:
         return ""
 
     section = "### 延迟\n"
     if rtt_gw_vals:
-        section += f"- AWS 网关 RTT: 均值 {round(statistics.mean(rtt_gw_vals),1)}ms, P95 {round(percentile(rtt_gw_vals,95),1)}ms, 最大 {round(max(rtt_gw_vals),1)}ms\n"
-        section += f"- AWS 网关丢包: {round(statistics.mean(loss_gw_vals),2)}%\n"
+        section += f"- 网关({gw_label}) RTT: 均值 {round(statistics.mean(rtt_gw_vals),1)}ms, P95 {round(percentile(rtt_gw_vals,95),1)}ms, 最大 {round(max(rtt_gw_vals),1)}ms\n"
+        section += f"- 网关({gw_label})丢包: {round(statistics.mean(loss_gw_vals),2) if loss_gw_vals else 'N/A'}%\n"
     if rtt_ext_vals:
         section += f"- 公网 RTT: 均值 {round(statistics.mean(rtt_ext_vals),1)}ms, P95 {round(percentile(rtt_ext_vals,95),1)}ms, 最大 {round(max(rtt_ext_vals),1)}ms\n"
-        section += f"- 公网丢包: {round(statistics.mean(loss_ext_vals),2)}%\n"
+        section += f"- 公网丢包: {round(statistics.mean(loss_ext_vals),2) if loss_ext_vals else 'N/A'}%\n"
         ext_std = round(statistics.stdev(rtt_ext_vals), 1) if len(rtt_ext_vals) > 1 else 0
         if ext_std > 10:
             section += f"- ⚠️ 公网延迟标准差 {ext_std}ms，可能存在路由切换\n"
@@ -562,6 +698,11 @@ def _build_hourly_stats(rows: list[dict]) -> str:
         hourly[hour]["rx"].append(row["rx_mbps"])
         hourly[hour]["tx"].append(row["tx_mbps"])
         hourly[hour]["cpu"].append(row["cpu_load_1m"])
+        # 聚合行本身带真实峰值；1Hz 行没有这些字段，退化为 max(值)。
+        hourly[hour].setdefault("rx_max", []).append(
+            row.get("rx_max_mbps", row["rx_mbps"]))
+        hourly[hour].setdefault("tx_max", []).append(
+            row.get("tx_max_mbps", row["tx_mbps"]))
 
     lines = ["## 逐小时带宽统计\n"]
     lines.append("| 时间 | Rx均值 | Rx峰值 | Tx均值 | Tx峰值 | CPU均值 |")
@@ -572,9 +713,9 @@ def _build_hourly_stats(rows: list[dict]) -> str:
         lines.append(
             f"| {hour} "
             f"| {round(statistics.mean(h['rx']),2)} Mbps "
-            f"| {round(max(h['rx']),2)} Mbps "
+            f"| {round(max(h['rx_max']),2)} Mbps "
             f"| {round(statistics.mean(h['tx']),2)} Mbps "
-            f"| {round(max(h['tx']),2)} Mbps "
+            f"| {round(max(h['tx_max']),2)} Mbps "
             f"| {round(statistics.mean(h['cpu']),3)} |"
         )
 
@@ -586,7 +727,8 @@ def _build_latency_correlation(rows: list[dict]) -> str:
     if not rows or "rtt_ext_ms" not in rows[0]:
         return ""
 
-    valid = [r for r in rows if r.get("rtt_ext_ms", -1) > 0]
+    valid = [r for r in rows
+             if r.get("rtt_ext_ms") is not None and r["rtt_ext_ms"] > 0]
     if len(valid) < 10:
         return ""
 
@@ -621,7 +763,7 @@ def _build_latency_correlation(rows: list[dict]) -> str:
 
 def build_llm_prompt(analysis: dict, rx_stats: dict, tx_stats: dict,
                      cpu_stats: dict, days: float, total_rows: int,
-                     rows: list[dict] = None) -> str:
+                     rows: list[dict] = None, aggregated: bool = False) -> str:
     """构建发给 Mimo 的分析 Prompt。"""
     ci = analysis["credit_inference"]
 
@@ -656,8 +798,8 @@ def build_llm_prompt(analysis: dict, rx_stats: dict, tx_stats: dict,
 ## 服务器信息
 - 厂商: AWS Lightsail（$7/月套餐，512MB 内存）
 - 分析周期: {days:.1f} 天
-- 数据量: {total_rows:,} 条 1Hz 采样
-- 采集间隔: 每秒 1 行，无降噪，无省略
+- 数据量: {total_rows:,} 条 1Hz 采样{('（流式聚合为 %s 个小时点）' % format(len(rows), ',')) if aggregated and rows else ''}
+- 采集间隔: {'每小时聚合（均值/峰值/样本数）' if aggregated else '每秒 1 行，无降噪，无省略'}
 
 ## 带宽统计
 

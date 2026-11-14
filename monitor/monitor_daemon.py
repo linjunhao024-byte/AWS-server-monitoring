@@ -19,7 +19,7 @@ import datetime
 import threading
 
 from config import (
-    INTERFACE, DATA_DIR, PING_GW, PING_EXT, PING_INTERVAL,
+    INTERFACE, DATA_DIR, PING_EXT, PING_INTERVAL, get_ping_gw,
 )
 from utils import (
     now_iso, today_label, bytes_to_mbps,
@@ -31,26 +31,35 @@ from data_sources import read_counter, read_loadavg, ping_once, check_interface
 # ---------------------------------------------------------------------------
 # 全局 Ping 缓存
 # ---------------------------------------------------------------------------
+# None 表示“未知”（工具缺失/权限不足），不是 100% 丢包。
 _ping_cache = {
-    "rtt_gw": -1.0,
-    "loss_gw": 100.0,
-    "rtt_ext": -1.0,
-    "loss_ext": 100.0,
+    "rtt_gw": None,
+    "loss_gw": None,
+    "rtt_ext": None,
+    "loss_ext": None,
 }
 _ping_lock = threading.Lock()
 
 
-def _ping_background():
+def _refresh_ping_cache(gw_target: str) -> None:
+    """探测一次网关/公网并更新缓存；未知结果保持 None，不写成 100%。"""
+    if gw_target:
+        loss_gw, rtt_gw = ping_once(gw_target)
+    else:
+        loss_gw, rtt_gw = None, None
+    loss_ext, rtt_ext = ping_once(PING_EXT)
+    with _ping_lock:
+        _ping_cache["rtt_gw"] = rtt_gw
+        _ping_cache["loss_gw"] = loss_gw
+        _ping_cache["rtt_ext"] = rtt_ext
+        _ping_cache["loss_ext"] = loss_ext
+
+
+def _ping_background(gw_target: str):
     """后台 ping 线程：每 PING_INTERVAL 秒更新一次缓存。"""
     while is_running():
         ping_start = time.monotonic()
-        loss_gw, rtt_gw = ping_once(PING_GW)
-        loss_ext, rtt_ext = ping_once(PING_EXT)
-        with _ping_lock:
-            _ping_cache["rtt_gw"] = rtt_gw
-            _ping_cache["loss_gw"] = loss_gw
-            _ping_cache["rtt_ext"] = rtt_ext
-            _ping_cache["loss_ext"] = loss_ext
+        _refresh_ping_cache(gw_target)
         # ping 本身耗时 2-4 秒，剩余时间补足到 PING_INTERVAL
         elapsed_ping = time.monotonic() - ping_start
         time.sleep(max(1, PING_INTERVAL - elapsed_ping))
@@ -215,17 +224,19 @@ def compute_deltas(cur_rx: int, cur_tx: int, prev_rx: int, prev_tx: int):
 def run_monitor(interface: str, output_dir: str):
     """严格 1Hz 采样循环。"""
     writer = DailyCSVWriter(output_dir, interface)
+    gw_target = get_ping_gw()
 
     prev_rx = read_counter(interface, "rx_bytes")
     prev_tx = read_counter(interface, "tx_bytes")
     prev_time = time.monotonic()
 
     # 启动后台 ping 线程
-    ping_thread = threading.Thread(target=_ping_background, daemon=True)
+    ping_thread = threading.Thread(target=_ping_background, args=(gw_target,), daemon=True)
     ping_thread.start()
 
+    gw_label = gw_target or "未识别(跳过网关探测)"
     print(f"[{now_iso()}] LIN-Monitor 带宽采集启动 | 网卡={interface} | 采样=1Hz | "
-          f"Ping目标={PING_GW},{PING_EXT}(后台{PING_INTERVAL}s) | 输出={output_dir}")
+          f"实际网关={gw_label} | 公网={PING_EXT}(后台{PING_INTERVAL}s) | 输出={output_dir}")
 
     # 钉钉启动通知
     try:

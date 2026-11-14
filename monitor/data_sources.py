@@ -17,6 +17,18 @@ import subprocess
 from config import INTERFACE, PING_COUNT, PING_TIMEOUT
 
 
+# 同一种探测错误只报一次，避免 1Hz/5min 循环把日志刷爆。
+_PROBE_WARNED = set()
+
+
+def _warn_probe_once(key, message: str) -> None:
+    """按原因去重地把探测错误写到 stderr。"""
+    if key in _PROBE_WARNED:
+        return
+    _PROBE_WARNED.add(key)
+    print(f"[ERROR] {message}", file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
 # sysfs 网卡计数器
 # ---------------------------------------------------------------------------
@@ -90,7 +102,8 @@ def read_loadavg() -> float:
 # Ping
 # ---------------------------------------------------------------------------
 
-def ping_once(target: str, count: int = None, timeout: int = None) -> tuple[float, float]:
+def ping_once(target: str, count: int = None,
+              timeout: int = None) -> tuple[float | None, float | None]:
     """
     ping 一次目标，返回 (loss_pct, rtt_ms)。
 
@@ -100,7 +113,8 @@ def ping_once(target: str, count: int = None, timeout: int = None) -> tuple[floa
         timeout: 超时秒数（默认使用配置）
 
     Returns:
-        (丢包率百分比, RTT毫秒) — 超时时 rtt_ms 返回 -1
+        (丢包率百分比, RTT毫秒) — 真超时返回 (100.0, -1.0)；
+        工具缺失/权限不足等无法探测的情况返回 (None, None) 表示“未知”。
     """
     count = count or PING_COUNT
     timeout = timeout or PING_TIMEOUT
@@ -121,15 +135,28 @@ def ping_once(target: str, count: int = None, timeout: int = None) -> tuple[floa
         rtt_ms = float(rtt_match.group(1)) if rtt_match else -1.0
 
         return (loss_pct, round(rtt_ms, 2))
-    except (subprocess.TimeoutExpired, Exception):
+    except subprocess.TimeoutExpired:
+        # 真的等不到回包：这是 100% 丢包，不是“探测工具不可用”。
         return (100.0, -1.0)
+    except (FileNotFoundError, PermissionError, OSError) as exc:
+        _warn_probe_once(
+            ("ping", type(exc).__name__, str(exc)),
+            f"ping 不可用（{type(exc).__name__}: {exc}），本次探测记为未知",
+        )
+        return (None, None)
+    except Exception as exc:
+        _warn_probe_once(
+            ("ping", type(exc).__name__, str(exc)),
+            f"ping 执行失败（{type(exc).__name__}: {exc}），本次探测记为未知",
+        )
+        return (None, None)
 
 
 # ---------------------------------------------------------------------------
 # Traceroute
 # ---------------------------------------------------------------------------
 
-def run_traceroute(target: str, attempts: int = 3) -> list[str]:
+def run_traceroute(target: str, attempts: int = 3) -> list[str] | None:
     """
     执行多次 traceroute，取最稳定的路径。
 
@@ -138,15 +165,19 @@ def run_traceroute(target: str, attempts: int = 3) -> list[str]:
         attempts: 执行次数，取出现最多的路径
 
     Returns:
-        路径节点列表，每个元素格式: "hop_num ip"
+        路径节点列表，每个元素格式: "hop_num ip"；
+        工具缺失/权限不足等无法探测的情况返回 None（区别于“跑了但没结果”的 []）。
     """
     all_paths = []
+    ran_ok = False
+    last_error = None
     for _ in range(attempts):
         try:
             result = subprocess.run(
                 ["traceroute", "-n", "-m", "15", "-w", "2", "-q", "1", target],
                 capture_output=True, text=True, timeout=60,
             )
+            ran_ok = True
             hops = []
             for line in result.stdout.strip().split("\n")[1:]:
                 parts = line.split()
@@ -157,11 +188,31 @@ def run_traceroute(target: str, attempts: int = 3) -> list[str]:
                         hops.append(f"{hop_num} {ip}")
             if hops:
                 all_paths.append(tuple(hops))
-        except (subprocess.TimeoutExpired, Exception):
-            pass
+        except subprocess.TimeoutExpired as exc:
+            last_error = exc
+            _warn_probe_once(
+                ("traceroute", "timeout"),
+                "traceroute 超时（目标可能过滤 ICMP/UDP），本次探测记为未知",
+            )
+        except (FileNotFoundError, PermissionError, OSError) as exc:
+            _warn_probe_once(
+                ("traceroute", type(exc).__name__, str(exc)),
+                f"traceroute 不可用（{type(exc).__name__}: {exc}），跳过路由探测",
+            )
+            return None
+        except Exception as exc:
+            last_error = exc
+            _warn_probe_once(
+                ("traceroute", type(exc).__name__, str(exc)),
+                f"traceroute 执行失败（{type(exc).__name__}: {exc}），本次探测记为未知",
+            )
 
     if not all_paths:
-        return []
+        # 至少有一次命令真的跑完了，只是没有有效 hop：这是 []。
+        # 全部尝试都异常（超时/执行失败）才是 None。
+        if ran_ok:
+            return []
+        return None if last_error is not None else []
 
     # 取出现次数最多的路径
     from collections import Counter

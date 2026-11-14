@@ -9,7 +9,9 @@
 """
 
 import os
+import re
 import json
+import subprocess
 
 # ---------------------------------------------------------------------------
 # 配置文件路径
@@ -61,7 +63,9 @@ INSTALL_DIR = "/opt/bandwidth_monitor"
 # ---------------------------------------------------------------------------
 # Ping 配置
 # ---------------------------------------------------------------------------
-PING_GW = "169.254.169.254"       # AWS 网关
+# 显式覆盖默认网关；留空表示启动时用 `ip route show default` 自动解析。
+# 注意 169.254.169.254 是云厂商元数据地址，不是默认网关，不要再把它填在这里。
+PING_GW = ""
 PING_EXT = "114.114.114.114"      # 公网目标
 PING_COUNT = 1
 PING_TIMEOUT = 1
@@ -117,11 +121,40 @@ _PERSISTENT_KEYS = [
     "XFYUN_API_KEY", "XFYUN_MODEL", "XFYUN_ENABLED",
     "EMAIL_ENABLED", "SMTP_SERVER", "SMTP_PORT", "SMTP_USE_SSL",
     "SMTP_USERNAME", "SMTP_PASSWORD", "EMAIL_RECIPIENTS",
-    "SERVER_ALIAS", "INTERFACE", "DATA_DIR",
+    "SERVER_ALIAS", "INTERFACE", "DATA_DIR", "PING_GW",
     "ROUTE_TARGET", "ROUTE_INTERVAL",
     "ROUTE_ALERT_ENABLED", "LOG_RETENTION_DAYS", "DISK_ALERT_MB",
     "SENDER_NAME", "WEEKLY_REPORT_DAY", "DAILY_REPORT_TIME",
 ]
+
+
+# 默认网关解析结果缓存（None 表示还没解析过；"" 表示解析失败）。
+_DEFAULT_GATEWAY_CACHE = None
+
+
+def detect_default_gateway() -> str:
+    """用 `ip route show default` 解析默认网关；失败返回空串并缓存。"""
+    global _DEFAULT_GATEWAY_CACHE
+    if _DEFAULT_GATEWAY_CACHE is not None:
+        return _DEFAULT_GATEWAY_CACHE
+    try:
+        result = subprocess.run(
+            ["ip", "route", "show", "default"],
+            capture_output=True, text=True, timeout=2, check=False,
+        )
+        match = re.search(r"\bdefault\s+via\s+(\S+)", result.stdout or "")
+        _DEFAULT_GATEWAY_CACHE = match.group(1) if match else ""
+    except (FileNotFoundError, PermissionError, OSError,
+            subprocess.TimeoutExpired):
+        _DEFAULT_GATEWAY_CACHE = ""
+    return _DEFAULT_GATEWAY_CACHE
+
+
+def get_ping_gw() -> str:
+    """返回实际使用的网关：显式 PING_GW 优先，否则自动解析。"""
+    if PING_GW:
+        return PING_GW
+    return detect_default_gateway()
 
 
 def save_config():

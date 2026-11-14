@@ -89,12 +89,19 @@ def run_monitor(target: str, interval: int, output_dir: str):
     ALERT_COOLDOWN = 1800       # 告警冷却 30 分钟
     CONFIRM_COUNT = 2           # 连续 N 次检测确认变化才告警
     confirm_counter = 0         # 连续确认计数
+    traceroute_unavailable_warned = False
 
     while is_running():
         print(f"[{now_iso()}] 正在 traceroute {target} ...")
         hops = run_traceroute(target)
 
-        if not hops:
+        if hops is None:
+            # 工具缺失/权限不足/全部超时：不是“路由变了”，跳过本次比较。
+            if not traceroute_unavailable_warned:
+                print(f"[{now_iso()}] [WARN] traceroute 不可用，跳过路由探测"
+                      "（后续同类错误不再重复提示）")
+                traceroute_unavailable_warned = True
+        elif not hops:
             # traceroute 超时 / 被过滤：这不是"路由变了"，只是这次没探测到。
             # 基线必须保持不动，否则一次失败就把基线清空，恢复后会被判成
             # "所有节点都消失了"。

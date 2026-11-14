@@ -1214,10 +1214,14 @@ def action_ai_analysis():
     if idx == -1:
         return
 
-    from analyzer import find_latest_file, find_files_in_dir, load_csv_files, reverse_engineer_credits, generate_report, build_llm_prompt
+    from analyzer import (
+        find_latest_file, find_files_in_dir, load_csv_files, load_csv_hourly,
+        reverse_engineer_credits, generate_report, build_llm_prompt,
+    )
     from stats import basic_stats
     from notifications import call_xfyun
 
+    aggregate = False
     if idx == 0:
         latest = find_latest_file()
         if not latest:
@@ -1253,16 +1257,32 @@ def action_ai_analysis():
             pause()
             return
         file_paths = all_files
+        aggregate = True
 
     step_frame("分析进度")
     step_row(f"  加载 {len(file_paths)} 个文件...")
-    rows = load_csv_files(file_paths)
+    if aggregate:
+        rows, agg_meta = load_csv_hourly(file_paths)
+        total_samples = agg_meta["total_samples"]
+        report_paths = file_paths[-agg_meta["files"]:]
+        if agg_meta["truncated"]:
+            step_row(f"  {c(YELLOW, '文件超过 30 天，已只取最近 30 天')}")
+        if agg_meta["files"] != len(file_paths):
+            step_row(f"  {c(DIM, '实际参与聚合: %d 个文件' % agg_meta['files'])}")
+    else:
+        rows = load_csv_files(file_paths)
+        total_samples = len(rows)
+        report_paths = file_paths
     if not rows:
         step_row(c(RED, "  没有有效数据"))
         step_end()
         pause()
         return
-    step_row(f"  {c(GREEN, '✓')} 共 {len(rows):,} 条记录")
+    if aggregate:
+        step_row(f"  {c(GREEN, '✓')} 聚合为 {len(rows):,} 个小时点"
+                 f"（原始 {total_samples:,} 条采样）")
+    else:
+        step_row(f"  {c(GREEN, '✓')} 共 {len(rows):,} 条记录")
     step_row(f"  运行积分反推算法...")
     analysis = reverse_engineer_credits(rows)
     step_row(f"  {c(GREEN, '✓')} 分析完成")
@@ -1271,9 +1291,16 @@ def action_ai_analysis():
     rx_vals = [r["rx_mbps"] for r in rows]
     tx_vals = [r["tx_mbps"] for r in rows]
     cpu_vals = [r["cpu_load_1m"] for r in rows]
+    rx_stats = basic_stats(rx_vals, "Rx")
+    tx_stats = basic_stats(tx_vals, "Tx")
+    cpu_stats = basic_stats(cpu_vals, "CPU")
+    # 聚合行的均值用于统计，真实峰值取每小时最大值。
+    rx_stats["max"] = max(r.get("rx_max_mbps", r["rx_mbps"]) for r in rows)
+    tx_stats["max"] = max(r.get("tx_max_mbps", r["tx_mbps"]) for r in rows)
+    cpu_stats["max"] = max(r.get("cpu_max", r["cpu_load_1m"]) for r in rows)
     days = (rows[-1]["timestamp"] - rows[0]["timestamp"]).total_seconds() / 86400
-    prompt = build_llm_prompt(analysis, basic_stats(rx_vals, "Rx"), basic_stats(tx_vals, "Tx"),
-                              basic_stats(cpu_vals, "CPU"), days, len(rows), rows=rows)
+    prompt = build_llm_prompt(analysis, rx_stats, tx_stats, cpu_stats, days,
+                              total_samples, rows=rows, aggregated=aggregate)
     llm_result = call_xfyun(prompt)
     if llm_result:
         step_row(f"  {c(GREEN, '✓')} 讯飞分析完成")
@@ -1281,7 +1308,8 @@ def action_ai_analysis():
         step_row(f"  {c(YELLOW, '讯飞分析失败，仅输出统计报告')}")
     step_end()
 
-    report = generate_report(rows, analysis, file_paths)
+    report = generate_report(rows, analysis, report_paths,
+                             total_samples=total_samples, aggregated=aggregate)
     if llm_result:
         report += "\n---\n\n## AI 深度分析\n\n" + llm_result + "\n"
     print(f"\n{c(CYAN, '═' * W)}")
