@@ -1,3 +1,5 @@
 /best
 /http_demo
 /maybedeploy/
+__pycache__/
+*.pyc
