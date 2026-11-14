@@ -767,8 +767,7 @@ send_dingtalk_test() {
     step_row "  发送测试消息..."
 
     # 使用 Python 发送测试消息（复用 notifications.py 的逻辑）
-    python3 "${CFG_INSTALL_DIR}/notifications.py" --test 2>/dev/null
-    if [ $? -eq 0 ]; then
+    if python3 "${CFG_INSTALL_DIR}/notifications.py" --test 2>/dev/null; then
         step_row "  ${GREEN}✓ 测试消息发送成功${NC}"
     else
         step_row "  ${YELLOW}⚠ 测试消息发送失败（不影响安装）${NC}"

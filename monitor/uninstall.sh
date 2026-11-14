@@ -142,12 +142,12 @@ echo ""
 step_title "删除 systemd 服务文件"
 step_sep
 for svc in "${SERVICES[@]}"; do
-    local_path="/etc/systemd/system/$svc"
-    if [ -f "$local_path" ]; then
-        rm -f "$local_path"
-        step_row "  ${GREEN}✓${NC} 已删除: $local_path"
+    svc_path="/etc/systemd/system/$svc"
+    if [ -f "$svc_path" ]; then
+        rm -f "$svc_path"
+        step_row "  ${GREEN}✓${NC} 已删除: $svc_path"
     else
-        step_row "  ${DIM}○${NC} 不存在: $local_path"
+        step_row "  ${DIM}○${NC} 不存在: $svc_path"
     fi
 done
 step_sep
