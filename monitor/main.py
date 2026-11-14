@@ -13,6 +13,7 @@ import sys
 import re
 import time
 import json
+import hmac
 import threading
 import unicodedata
 import subprocess
@@ -187,7 +188,31 @@ def _systemctl_status(service: str) -> str:
         return "未知"
 
 
-def _update_daily_report_timer(time_str: str) -> tuple[bool, str]:
+def run_systemctl(args, timeout: int = 10) -> tuple[bool, str]:
+    """执行 systemctl，返回 (是否成功, stderr/失败原因)；失败时写日志。"""
+    try:
+        proc = subprocess.run(
+            ["systemctl"] + list(args),
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except Exception as exc:
+        msg = f"{type(exc).__name__}: {exc}"
+        print(f"  {c(RED, '✗')} systemctl {' '.join(args)} 失败: {msg}",
+              file=sys.stderr)
+        return False, msg
+    err = (proc.stderr or "").strip()
+    if proc.returncode != 0:
+        msg = err or f"返回码 {proc.returncode}"
+        print(f"  {c(RED, '✗')} systemctl {' '.join(args)} 失败: {msg}",
+              file=sys.stderr)
+        return False, msg
+    return True, err
+
+
+def _update_daily_report_timer(
+    time_str: str,
+    timer_path: str = "/etc/systemd/system/bandwidth-daily-report.timer",
+) -> tuple[bool, str]:
     """更新每日报告的 systemd timer 时间。返回 (是否成功, 失败原因)。"""
     try:
         hh, mm = time_str.split(":")
@@ -209,23 +234,43 @@ Persistent=true
 WantedBy=timers.target
 """
 
-    timer_path = "/etc/systemd/system/bandwidth-daily-report.timer"
+    old_content = None
+    if os.path.exists(timer_path):
+        try:
+            with open(timer_path, "r", encoding="utf-8") as f:
+                old_content = f.read()
+        except OSError:
+            old_content = None
+
     try:
-        with open(timer_path, "w") as f:
+        with open(timer_path, "w", encoding="utf-8") as f:
             f.write(timer_content)
-        subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
-        subprocess.run(["systemctl", "re-enable", "bandwidth-daily-report.timer"],
-                       capture_output=True, timeout=10)
-        # enable 之后还要 start，否则改了时间但 timer 没在跑
-        subprocess.run(["systemctl", "start", "bandwidth-daily-report.timer"],
-                       capture_output=True, timeout=10)
-        return True, ""
     except PermissionError:
         return False, "无权限写入 systemd 单元，请用 sudo 运行 monitor"
     except OSError as exc:
         return False, f"写入失败: {exc}"
-    except Exception as exc:
-        return False, f"未知错误: {exc}"
+
+    commands = [
+        (["daemon-reload"], 10),
+        (["re-enable", "bandwidth-daily-report.timer"], 10),
+        # enable 之后还要 start，否则改了时间但 timer 没在跑
+        (["start", "bandwidth-daily-report.timer"], 10),
+    ]
+    for args, timeout in commands:
+        ok, err = run_systemctl(args, timeout=timeout)
+        if not ok:
+            # 任一步失败都恢复旧 timer，避免“界面报失败、文件已被改掉”。
+            try:
+                if old_content is None:
+                    os.remove(timer_path)
+                else:
+                    with open(timer_path, "w", encoding="utf-8") as f:
+                        f.write(old_content)
+                run_systemctl(["daemon-reload"], timeout=10)
+            except OSError:
+                pass
+            return False, f"{' '.join(args)} 失败: {err}"
+    return True, ""
 
 
 def _mask(s: str) -> str:
@@ -453,12 +498,14 @@ def action_manual_push():
         if traffic:
             msg = build_dingtalk_message(traffic)
             if DINGTALK_WEBHOOK:
-                send_dingtalk("服务器流量日报", msg)
-                print(f"\n  {c(GREEN, '✓')} 钉钉日报已发送")
+                ok = send_dingtalk("服务器流量日报", msg)
+                print(f"\n  {c(GREEN, '✓') if ok else c(RED, '✗')} "
+                      f"{'钉钉日报已发送' if ok else '钉钉日报发送失败'}")
             if TG_BOT_TOKEN:
                 tg_msg = f"📊 *服务器流量日报*\n\n{_server_info_block()}\n\n入站: {format_bytes(traffic.today_rx)} | 出站: {format_bytes(traffic.today_tx)} | 总计: {format_bytes(traffic.today_total)}"
-                send_telegram(tg_msg)
-                print(f"  {c(GREEN, '✓')} Telegram 日报已发送")
+                ok = send_telegram(tg_msg)
+                print(f"  {c(GREEN, '✓') if ok else c(RED, '✗')} "
+                      f"{'Telegram 日报已发送' if ok else 'Telegram 日报发送失败'}")
         else:
             print(f"\n  {c(YELLOW, '无法获取流量数据')}")
 
@@ -842,6 +889,17 @@ def action_edit_config():
             pause()
 
 
+def _apply_boot_action(services, action: str) -> list[tuple[str, str]]:
+    """对一组服务执行 enable/disable，返回失败列表 [(desc, 原因)]。"""
+    failed = []
+    for svc, desc in services:
+        ok, err = run_systemctl([action, svc], timeout=5)
+        if not ok:
+            failed.append((desc, err))
+            step_row(f"  {c(RED, '✗')} {desc} {action} 失败: {err}")
+    return failed
+
+
 def action_boot_toggle():
     """[10] 开机自启"""
     clear_screen()
@@ -873,9 +931,14 @@ def action_boot_toggle():
     if idx == -1:
         return
     action = "enable" if idx == 0 else "disable"
-    for svc, desc in services:
-        subprocess.run(["systemctl", action, svc], capture_output=True, timeout=5)
-    print(f"\n  {c(GREEN, '✓')} 已{'启用' if idx == 0 else '禁用'}全部开机自启")
+    failed = _apply_boot_action(services, action)
+    if failed:
+        print(f"\n  {c(RED, '✗')} {len(failed)} 个服务操作失败，未全部"
+              f"{'启用' if idx == 0 else '禁用'}开机自启")
+        for desc, err in failed:
+            print(f"    {c(RED, desc)}: {err}")
+    else:
+        print(f"\n  {c(GREEN, '✓')} 已{'启用' if idx == 0 else '禁用'}全部开机自启")
     pause()
 
 
@@ -1517,6 +1580,16 @@ def _get_last_logs(service: str, lines: int = 15) -> str:
         return f"⚠ 无法获取 {service} 日志"
 
 
+def _tg_callback_authorized(chat_id: str) -> tuple[bool, str]:
+    """Telegram 回调鉴权：未配置 TG_CHAT_ID 时 fail-closed。"""
+    if not TG_CHAT_ID:
+        print("[ERROR] 未配置 TG_CHAT_ID，回调已拒绝", file=sys.stderr)
+        return False, "未配置 TG_CHAT_ID"
+    if not hmac.compare_digest(str(chat_id), str(TG_CHAT_ID)):
+        return False, "chat 不匹配"
+    return True, ""
+
+
 def _tg_poll_thread():
     """后台线程：轮询 Telegram 回调。"""
     from notifications import poll_telegram_updates, send_telegram_keyboard, answer_callback
@@ -1535,11 +1608,13 @@ def _tg_poll_thread():
             if callback:
                 query_id = callback.get("id", "")
                 chat_id = str(((callback.get("message") or {}).get("chat") or {}).get("id", ""))
-                # 只接受配置里的 chat：否则任何人给这个 bot 发回调都能启停服务
-                if TG_CHAT_ID and chat_id != str(TG_CHAT_ID):
-                    print(f"[WARN] 忽略来自 chat {chat_id} 的回调 {callback.get('data')}",
-                          file=sys.stderr)
-                    answer_callback(query_id, "无权限")
+                # 只接受配置里的 chat：否则任何人给这个 bot 发回调都能启停服务。
+                # TG_CHAT_ID 为空时必须拒绝（fail-closed），不能因为没配就放行。
+                authorized, reason = _tg_callback_authorized(chat_id)
+                if not authorized:
+                    print(f"[WARN] 忽略来自 chat {chat_id} 的回调 "
+                          f"{callback.get('data')}（{reason}）", file=sys.stderr)
+                    answer_callback(query_id, "无权限" if TG_CHAT_ID else "未配置鉴权")
                     continue
 
                 data = callback.get("data", "")
@@ -1801,8 +1876,9 @@ def main():
         if traffic:
             msg = build_dingtalk_message(traffic)
             from notifications import send_dingtalk
-            send_dingtalk("服务器流量日报", msg)
-            print(f"  {c(GREEN, '✓')} 日报已发送")
+            ok = send_dingtalk("服务器流量日报", msg)
+            print(f"  {c(GREEN, '✓') if ok else c(RED, '✗')} "
+                  f"{'日报已发送' if ok else '日报发送失败'}")
         else:
             print(f"  {c(RED, '✗')} 无法获取流量数据")
         print(f"\n{SIGNATURE}")

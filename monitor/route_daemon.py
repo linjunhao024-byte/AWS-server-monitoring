@@ -72,6 +72,16 @@ def build_route_alert(target: str, change_info: dict, hops: list[str]) -> str:
 # 主循环
 # ---------------------------------------------------------------------------
 
+def send_route_alert(target: str, change: dict, hops: list[str]) -> bool:
+    """发送路由变化告警，按真实结果打印并返回是否送达。"""
+    alert = build_route_alert(target, change, hops)
+    ok = send_dingtalk("⚠️ 路由变化告警", alert)
+    if not ok:
+        print(f"[{now_iso()}] [ERR] 路由告警发送失败，将在下一轮重试",
+              file=sys.stderr)
+    return ok
+
+
 def run_monitor(target: str, interval: int, output_dir: str):
     print(f"[{now_iso()}] LIN-Monitor 路由监测启动 | 目标={target} | 间隔={interval}秒 | 输出={output_dir}")
 
@@ -121,17 +131,24 @@ def run_monitor(target: str, interval: int, output_dir: str):
                 # 连续确认够了，且冷却时间已过
                 now_ts = time.time()
                 if confirm_counter >= CONFIRM_COUNT and (now_ts - last_alert_time) > ALERT_COOLDOWN:
-                    change_count += 1
-                    log_route(output_dir, target, hops, pending_change)
                     if ROUTE_ALERT_ENABLED:
-                        alert = build_route_alert(target, pending_change, hops)
-                        send_dingtalk("⚠️ 路由变化告警", alert)
-                        print(f"[{now_iso()}] 📤 告警已发送 (累计 {change_count} 次)")
+                        ok = send_route_alert(target, pending_change, hops)
+                        if ok:
+                            change_count += 1
+                            log_route(output_dir, target, hops, pending_change)
+                            print(f"[{now_iso()}] 📤 告警已发送 (累计 {change_count} 次)")
+                            last_alert_time = now_ts
+                            pending_change = None
+                            confirm_counter = 0
+                        # 发送失败不推进冷却时间，保留 pending_change，
+                        # 下一轮继续重试，避免“日志说已发送、实际没发出去”。
                     else:
+                        change_count += 1
+                        log_route(output_dir, target, hops, pending_change)
                         print(f"[{now_iso()}] 路由告警已关闭，未推送钉钉")
-                    last_alert_time = now_ts
-                    pending_change = None
-                    confirm_counter = 0
+                        last_alert_time = now_ts
+                        pending_change = None
+                        confirm_counter = 0
             else:
                 # 路径稳定，重置确认计数
                 if confirm_counter > 0:

@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import os
 import sys
+import shutil
 import statistics
 from datetime import datetime, timedelta
 
 from config import (
     SERVER_ALIAS, INTERFACE, WEEKLY_REPORT_DAY, CHART_SAVE_PATH,
+    DATA_DIR, DISK_ALERT_MB,
 )
 from utils import (
     format_bytes, get_server_ip, get_iso_week_info,
@@ -534,10 +536,40 @@ def _route_changes_today() -> str:
         return "读取失败"
 
 
+def _disk_alerts() -> list[str]:
+    """按配置的数据目录统计磁盘占用与剩余空间，返回告警文案。"""
+    import glob as glob_mod
+
+    data_dir = DATA_DIR
+    if not os.path.isdir(data_dir):
+        fallback = os.path.dirname(os.path.abspath(__file__))
+        print(f"[WARN] 数据目录 {data_dir} 不存在，磁盘统计回退到 {fallback}",
+              file=sys.stderr)
+        data_dir = fallback
+
+    alerts = []
+    total_bytes = sum(
+        os.path.getsize(f) for f in glob_mod.glob(os.path.join(data_dir, "*"))
+        if os.path.isfile(f)
+    )
+    total_mb = round(total_bytes / (1024 * 1024), 1)
+    if total_mb > DISK_ALERT_MB:
+        alerts.append(f"磁盘 {total_mb}MB")
+
+    # 同时看数据目录所在分区的剩余空间；目录/文件系统不可用时只跳过这一项。
+    try:
+        usage = shutil.disk_usage(data_dir)
+        free_mb = round(usage.free / (1024 * 1024), 1)
+        if free_mb < 100:
+            alerts.append(f"剩余空间 {free_mb}MB")
+    except OSError:
+        pass
+    return alerts
+
+
 def build_daily_detail_message() -> str:
     """构建精简的每日钉钉推送消息。"""
     from utils import now_iso
-    from config import SERVER_ALIAS, DISK_ALERT_MB
     from notifications import _get_ip_info
     from stats import percentile
 
@@ -600,16 +632,7 @@ def build_daily_detail_message() -> str:
     if "变化" in route_status:
         alerts.append(f"路由{route_status}")
 
-    import os
-    import glob as glob_mod
-    data_dir = "/var/log/bandwidth"
-    total_bytes = sum(
-        os.path.getsize(f) for f in glob_mod.glob(os.path.join(data_dir, "*"))
-        if os.path.isfile(f)
-    )
-    total_mb = round(total_bytes / (1024 * 1024), 1)
-    if total_mb > DISK_ALERT_MB:
-        alerts.append(f"磁盘 {total_mb}MB")
+    alerts.extend(_disk_alerts())
 
     if csv_rows:
         rtt_ext = [r["rtt_ext_ms"] for r in csv_rows if r["rtt_ext_ms"] > 0]

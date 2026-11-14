@@ -40,6 +40,25 @@ _ping_cache = {
 }
 _ping_lock = threading.Lock()
 
+# 采样步长（秒）。调度用单调时钟的绝对 deadline，而不是“睡 1 秒再干活”，
+# 否则每次采样的处理耗时会累加到周期里，长期跑会越来越偏。
+SAMPLE_INTERVAL_SECONDS = 1.0
+
+
+def next_sleep_seconds(now: float, deadline: float) -> float:
+    """返回距离下一次采样还应睡多久；已过 deadline 时返回 0。"""
+    return max(0.0, deadline - now)
+
+
+def advance_deadline(now: float, deadline: float,
+                     step: float = SAMPLE_INTERVAL_SECONDS) -> float:
+    """把 deadline 按固定步长推进；掉帧时直接跳过，不追赶补采样。"""
+    deadline += step
+    if deadline <= now:
+        missed = int((now - deadline) // step) + 1
+        deadline += missed * step
+    return deadline
+
 
 def _refresh_ping_cache(gw_target: str) -> None:
     """探测一次网关/公网并更新缓存；未知结果保持 None，不写成 100%。"""
@@ -229,6 +248,7 @@ def run_monitor(interface: str, output_dir: str):
     prev_rx = read_counter(interface, "rx_bytes")
     prev_tx = read_counter(interface, "tx_bytes")
     prev_time = time.monotonic()
+    deadline = time.monotonic() + SAMPLE_INTERVAL_SECONDS
 
     # 启动后台 ping 线程
     ping_thread = threading.Thread(target=_ping_background, args=(gw_target,), daemon=True)
@@ -246,8 +266,10 @@ def run_monitor(interface: str, output_dir: str):
         pass
 
     while is_running():
-        time.sleep(1.0)
+        time.sleep(next_sleep_seconds(time.monotonic(), deadline))
         now_mono = time.monotonic()
+        # 固定步长推进；单次采样超时则跳过漏掉的节拍，不连续补采样。
+        deadline = advance_deadline(now_mono, deadline)
         elapsed = now_mono - prev_time
 
         try:
@@ -291,6 +313,7 @@ def run_monitor(interface: str, output_dir: str):
             prev_rx = read_counter(interface, "rx_bytes")
             prev_tx = read_counter(interface, "tx_bytes")
             prev_time = time.monotonic()
+            deadline = time.monotonic() + SAMPLE_INTERVAL_SECONDS
             continue
 
         writer.write_row({

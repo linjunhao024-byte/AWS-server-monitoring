@@ -14,11 +14,13 @@ import sys
 import json
 import hmac
 import time
+import socket
 import base64
 import hashlib
 import smtplib
 import urllib.request
 import urllib.parse
+import urllib.error
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
@@ -203,29 +205,118 @@ def answer_callback(callback_query_id: str, text: str = "") -> bool:
         return False
 
 
+TG_POLL_WARN_AFTER = 5
+_tg_poll_state = {
+    "consecutive_failures": 0,
+    "http4xx_logged": False,
+    "last_error": "",
+    "last_error_kind": "",
+}
+
+
+def reset_telegram_poll_state() -> None:
+    """重置轮询失败计数（测试或重新启动轮询时使用）。"""
+    _tg_poll_state.update({
+        "consecutive_failures": 0,
+        "http4xx_logged": False,
+        "last_error": "",
+        "last_error_kind": "",
+    })
+
+
+def get_telegram_poll_state() -> dict:
+    """返回轮询失败状态副本，供面板/测试查看。"""
+    return dict(_tg_poll_state)
+
+
+def _tg_poll_failed(kind: str, detail: str, debug: bool = False) -> None:
+    """记录一次轮询失败；连续失败达到阈值时只打一条 WARNING。"""
+    state = _tg_poll_state
+    state["consecutive_failures"] += 1
+    state["last_error"] = detail[:200]
+    state["last_error_kind"] = kind
+    count = state["consecutive_failures"]
+    if debug:
+        print(f"[DEBUG] Telegram 轮询失败（{kind}，连续 {count} 次）: {detail[:200]}",
+              file=sys.stderr)
+    if count == TG_POLL_WARN_AFTER:
+        print(f"[WARN] Telegram 轮询已连续失败 {count} 次，面板回调可能不可用："
+              f"{kind} {detail[:200]}", file=sys.stderr)
+
+
 def poll_telegram_updates(offset: int = 0, timeout: int = 30) -> list[dict]:
     """
     长轮询 Telegram 更新（用于接收内联键盘回调）。
 
-    Args:
-        offset: 上次处理的 update_id + 1
-        timeout: 长轮询超时秒数
+    异常不再被静默吞掉：超时打 DEBUG、HTTP 4xx 打一次 ERROR、解析错误带
+    原始响应前 200 字；连续失败达到阈值打一条 WARNING。
 
     Returns:
-        update 列表
+        update 列表；失败时返回空列表，但失败原因记录在 _tg_poll_state。
     """
     if not TG_BOT_TOKEN:
         return []
+
+    url = f"{TG_API_URL}/bot{TG_BOT_TOKEN}/getUpdates?offset={offset}&timeout={timeout}"
+    req = urllib.request.Request(url, headers={"User-Agent": "AWS-Monitor"})
+
     try:
-        url = f"{TG_API_URL}/bot{TG_BOT_TOKEN}/getUpdates?offset={offset}&timeout={timeout}"
-        req = urllib.request.Request(url, headers={"User-Agent": "AWS-Monitor"})
         with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            if result.get("ok"):
-                return result.get("result", [])
-    except Exception:
-        pass
-    return []
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read(200).decode("utf-8", "replace")
+        except Exception:
+            body = ""
+        if 400 <= exc.code < 500:
+            if not _tg_poll_state["http4xx_logged"]:
+                print(f"[ERROR] Telegram 轮询 HTTP {exc.code}: {body[:200]}",
+                      file=sys.stderr)
+                _tg_poll_state["http4xx_logged"] = True
+            _tg_poll_failed(f"http_{exc.code}", body or str(exc))
+        else:
+            print(f"[ERROR] Telegram 轮询 HTTP {exc.code}: {body[:200]}",
+                  file=sys.stderr)
+            _tg_poll_failed(f"http_{exc.code}", body or str(exc))
+        return []
+    except (socket.timeout, TimeoutError) as exc:
+        _tg_poll_failed("timeout", str(exc) or "请求超时", debug=True)
+        return []
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        if isinstance(reason, (socket.timeout, TimeoutError)):
+            _tg_poll_failed("timeout", str(reason), debug=True)
+        else:
+            print(f"[ERROR] Telegram 轮询网络错误: {reason}", file=sys.stderr)
+            _tg_poll_failed("network", str(reason))
+        return []
+    except Exception as exc:
+        print(f"[ERROR] Telegram 轮询异常 {type(exc).__name__}: {str(exc)[:200]}",
+              file=sys.stderr)
+        _tg_poll_failed("exception", f"{type(exc).__name__}: {exc}")
+        return []
+
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        print(f"[ERROR] Telegram 轮询响应解析失败: {str(exc)[:200]}；"
+              f"原文: {raw[:200]!r}", file=sys.stderr)
+        _tg_poll_failed("parse", f"{exc}; raw={raw[:200]!r}")
+        return []
+
+    if not isinstance(result, dict) or not result.get("ok"):
+        detail = str(result)[:200]
+        print(f"[ERROR] Telegram 轮询返回 ok=false: {detail}", file=sys.stderr)
+        _tg_poll_failed("api", detail)
+        return []
+
+    _tg_poll_state.update({
+        "consecutive_failures": 0,
+        "http4xx_logged": False,
+        "last_error": "",
+        "last_error_kind": "",
+    })
+    return result.get("result", [])
 
 
 def _tg_main_keyboard() -> list:
@@ -638,6 +729,22 @@ def send_weekly_email_report() -> bool:
         return False
 
 
+def send_daily_report() -> bool:
+    """生成并发送每日钉钉报告；按真实发送结果打印，返回是否成功。"""
+    from reporter import build_daily_detail_message
+    from config import SERVER_ALIAS
+
+    msg = build_daily_detail_message()
+    ok = send_dingtalk(f"📊 {SERVER_ALIAS} 每日报告", msg)
+    from utils import now_iso
+    if ok:
+        print(f"[{now_iso()}] 每日报告已推送")
+    else:
+        print(f"[{now_iso()}] [ERR] 每日报告发送失败：钉钉未配置或推送失败",
+              file=sys.stderr)
+    return ok
+
+
 # ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
@@ -703,14 +810,10 @@ if __name__ == "__main__":
 
         elif _sys.argv[1] == "--daily-report":
             # 每日报告（钉钉）；若今天是配置的周报发送日，顺带发邮件周报
-            from reporter import build_daily_detail_message
-            from config import SERVER_ALIAS, WEEKLY_REPORT_DAY, EMAIL_ENABLED
+            from config import WEEKLY_REPORT_DAY, EMAIL_ENABLED
             import datetime as _datetime
 
-            msg = build_daily_detail_message()
-            send_dingtalk(f"📊 {SERVER_ALIAS} 每日报告", msg)
-            from utils import now_iso
-            print(f"[{now_iso()}] 每日报告已推送")
+            ok = send_daily_report()
 
             try:
                 weekday = int(WEEKLY_REPORT_DAY)
@@ -719,4 +822,6 @@ if __name__ == "__main__":
             if EMAIL_ENABLED and _datetime.datetime.now().weekday() == weekday:
                 send_weekly_email_report()
 
-            _sys.exit(0)
+            # 失败时返回非 0，让 systemd 把 daily-report 标成 failed，
+            # 不再出现“日志说已推送、实际没发出去”的假成功。
+            _sys.exit(0 if ok else 1)

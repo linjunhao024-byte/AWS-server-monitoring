@@ -12,6 +12,10 @@ import os
 import signal
 import datetime
 import time
+import hashlib
+import shutil
+import subprocess
+import tempfile
 
 # ---------------------------------------------------------------------------
 # 全局优雅退出标志
@@ -377,30 +381,167 @@ def check_version() -> dict:
     return result
 
 
-def do_update() -> dict:
+DEFAULT_UPDATE_URL = (
+    "https://github.com/linjunhao024-byte/AWS-server-monitoring/"
+    "archive/refs/heads/main.tar.gz"
+)
+UPDATE_SERVICES = [
+    "bandwidth-monitor.service",
+    "route-monitor.service",
+    "bandwidth-analyzer.timer",
+    "bandwidth-maintenance.timer",
+    "bandwidth-daily-report.timer",
+]
+MAX_UPDATE_BYTES = 50 * 1024 * 1024
+MIN_UPDATE_BYTES = 1024
+
+
+def _run_systemctl(args, timeout: int = 10) -> tuple[bool, str]:
+    """执行 systemctl 并返回 (是否成功, stderr/失败原因)。"""
+    try:
+        proc = subprocess.run(
+            ["systemctl"] + list(args),
+            capture_output=True, text=True, timeout=timeout,
+        )
+        err = (proc.stderr or "").strip()
+        if proc.returncode != 0:
+            return False, err or f"systemctl 返回码 {proc.returncode}"
+        return True, err
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _replace_path(src: str, dst: str) -> None:
+    """用 src 替换 dst（文件或目录）。"""
+    if os.path.isdir(dst) and not os.path.islink(dst):
+        shutil.rmtree(dst)
+    elif os.path.exists(dst) or os.path.islink(dst):
+        os.remove(dst)
+    if os.path.isdir(src):
+        shutil.copytree(src, dst)
+    else:
+        shutil.copy2(src, dst)
+
+
+def _download_update(url: str, dest: str,
+                     expected_sha256: str | None = None) -> tuple[bool, str]:
+    """流式下载更新包，校验非空/大小/可选 sha256。"""
+    try:
+        import requests
+    except ImportError as exc:
+        return False, f"缺少 requests 依赖: {exc}"
+
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with requests.get(url, stream=True, timeout=(5, 30)) as resp:
+            resp.raise_for_status()
+            with open(dest, "wb") as fh:
+                for chunk in resp.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > MAX_UPDATE_BYTES:
+                        return False, f"更新包过大（超过 {MAX_UPDATE_BYTES // 1024 // 1024} MB）"
+                    fh.write(chunk)
+                    digest.update(chunk)
+    except Exception as exc:
+        return False, f"下载失败: {exc}"
+
+    if total == 0:
+        return False, "下载失败: 更新包为空"
+    if total < MIN_UPDATE_BYTES:
+        return False, f"下载失败: 更新包过小（{total} 字节）"
+    if expected_sha256:
+        actual = digest.hexdigest().lower()
+        if actual != expected_sha256.strip().lower():
+            return False, f"sha256 校验失败: 期望 {expected_sha256[:12]}… 实际 {actual[:12]}…"
+    return True, ""
+
+
+def _rollback_update(install_dir: str, backup_dir: str, backed: list[str],
+                     created: list[str], unit_dir: str,
+                     unit_backups: dict[str, bytes],
+                     unit_created: list[str],
+                     services: list[str]) -> list[str]:
+    """把已替换/新建的文件和 systemd 单元恢复原状；返回回滚过程中的错误。"""
+    errors = []
+    for name in created:
+        path = os.path.join(install_dir, name)
+        try:
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            elif os.path.exists(path) or os.path.islink(path):
+                os.remove(path)
+        except OSError as exc:
+            errors.append(f"删除 {name}: {exc}")
+
+    for name in backed:
+        src = os.path.join(backup_dir, name)
+        dst = os.path.join(install_dir, name)
+        try:
+            _replace_path(src, dst)
+        except OSError as exc:
+            errors.append(f"恢复 {name}: {exc}")
+
+    for name in unit_created:
+        path = os.path.join(unit_dir, name)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError as exc:
+            errors.append(f"删除单元 {name}: {exc}")
+    for name, data in unit_backups.items():
+        try:
+            with open(os.path.join(unit_dir, name), "wb") as fh:
+                fh.write(data)
+        except OSError as exc:
+            errors.append(f"恢复单元 {name}: {exc}")
+
+    if unit_backups or unit_created:
+        _run_systemctl(["daemon-reload"], timeout=15)
+    for svc in services:
+        _run_systemctl(["restart", svc], timeout=10)
+    return errors
+
+
+def do_update(install_dir: str | None = None,
+              config_file: str | None = None,
+              unit_dir: str = "/etc/systemd/system",
+              services: list[str] | None = None,
+              tar_url: str = DEFAULT_UPDATE_URL,
+              expected_sha256: str | None = None) -> dict:
     """
     一键更新：从 GitHub 拉取最新代码，保留配置，重启服务。
 
-    Returns:
-        {"success": bool, "message": str, "version": str}
+    下载/解压/替换/重启任一步失败都会回滚旧文件；只有全部服务重启成功
+    才返回 success=True。参数默认从 config 读取，显式传入便于离线测试。
     """
-    import subprocess
-    import shutil
-    import tempfile
     from config import INSTALL_DIR, CONFIG_FILE
 
+    install_dir = install_dir or INSTALL_DIR
+    config_file = config_file or CONFIG_FILE
+    services = list(services or UPDATE_SERVICES)
+    expected_sha256 = expected_sha256 or os.environ.get("AWS_MONITOR_UPDATE_SHA256")
+
     result = {"success": False, "message": "", "version": ""}
+    tmp_dir = tempfile.mkdtemp(prefix="aws_monitor_update_")
+    tar_path = os.path.join(tmp_dir, "update.tar.gz")
+    backup_dir = os.path.join(tmp_dir, "backup")
+    backed: list[str] = []
+    created: list[str] = []
+    unit_backups: dict[str, bytes] = {}
+    unit_created: list[str] = []
+    units_synced = 0
 
-    # 1. 下载最新代码到临时目录
     try:
-        tmp_dir = tempfile.mkdtemp(prefix="aws_monitor_update_")
-        tar_url = "https://github.com/linjunhao024-byte/AWS-server-monitoring/archive/refs/heads/main.tar.gz"
-        tar_path = os.path.join(tmp_dir, "update.tar.gz")
+        # 1. 下载（超时 + 流式写盘 + 大小/sha256 校验）
+        ok, err = _download_update(tar_url, tar_path, expected_sha256)
+        if not ok:
+            result["message"] = err
+            return result
 
-        import urllib.request
-        urllib.request.urlretrieve(tar_url, tar_path)
-
-        # 解压：拒绝绝对路径、.. 与指向外部的链接（tar 路径穿越）
+        # 2. 解压：拒绝绝对路径、.. 与指向外部的链接（tar 路径穿越）
         import tarfile
 
         def _safe_members(members, dest):
@@ -413,118 +554,127 @@ def do_update() -> dict:
                     raise ValueError(f"包内含链接成员: {m.name}")
                 yield m
 
-        with tarfile.open(tar_path, "r:gz") as tar:
-            tar.extractall(tmp_dir, members=_safe_members(tar.getmembers(), tmp_dir))
+        try:
+            with tarfile.open(tar_path, "r:gz") as tar:
+                tar.extractall(tmp_dir, members=_safe_members(tar.getmembers(), tmp_dir))
+        except Exception as exc:
+            result["message"] = f"解压失败: {exc}"
+            return result
 
-        # 找到解压后的 monitor 目录
         extracted_dir = os.path.join(tmp_dir, "AWS-server-monitoring-main", "monitor")
         if not os.path.isdir(extracted_dir):
             result["message"] = "下载解压失败：未找到 monitor 目录"
             return result
 
-    except Exception as e:
-        result["message"] = f"下载失败: {e}"
-        return result
-
-    # 2. 备份当前配置
-    backup_config = None
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                backup_config = f.read()
-        except Exception:
-            pass
-
-    # 3. 复制新文件（跳过 settings.json）
-    try:
+        # 3. 备份旧文件后替换（settings.json 与 __pycache__ 不动）
         skip_files = {"settings.json", "__pycache__"}
-        for name in os.listdir(extracted_dir):
-            if name in skip_files:
-                continue
-            src = os.path.join(extracted_dir, name)
-            dst = os.path.join(INSTALL_DIR, name)
-            if os.path.isdir(src):
-                if os.path.isdir(dst):
-                    shutil.rmtree(dst)
-                shutil.copytree(src, dst)
-            else:
-                shutil.copy2(src, dst)
-    except Exception as e:
-        result["message"] = f"文件更新失败: {e}"
-        return result
-
-    # 4. 恢复配置
-    if backup_config:
+        os.makedirs(backup_dir, exist_ok=True)
         try:
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                f.write(backup_config)
-            os.chmod(CONFIG_FILE, 0o600)
-        except Exception:
-            pass
+            for name in os.listdir(extracted_dir):
+                if name in skip_files:
+                    continue
+                src = os.path.join(extracted_dir, name)
+                dst = os.path.join(install_dir, name)
+                if os.path.exists(dst) or os.path.islink(dst):
+                    bdst = os.path.join(backup_dir, name)
+                    if os.path.isdir(dst) and not os.path.islink(dst):
+                        shutil.copytree(dst, bdst)
+                    else:
+                        shutil.copy2(dst, bdst, follow_symlinks=False)
+                    backed.append(name)
+                else:
+                    created.append(name)
+                _replace_path(src, dst)
+        except Exception as exc:
+            rollback_errors = _rollback_update(
+                install_dir, backup_dir, backed, created,
+                unit_dir, unit_backups, unit_created, services,
+            )
+            result["message"] = f"文件更新失败: {exc}"
+            if rollback_errors:
+                result["message"] += "；回滚异常: " + "; ".join(rollback_errors)
+            return result
 
-    # 5. 同步 systemd 单元：仓库里的 systemd/ 只是模板，
-    #    真正生效的是 /etc/systemd/system 下的那份。以前更新只覆盖安装目录，
-    #    新版本改了 OnCalendar / 加固项或新增 timer 都永远不会生效。
-    units_synced = 0
-    unit_dir = "/etc/systemd/system"
-    src_unit_dir = os.path.join(INSTALL_DIR, "systemd")
-    if os.path.isdir(src_unit_dir) and os.path.isdir(unit_dir):
-        for name in os.listdir(src_unit_dir):
-            if not (name.endswith(".service") or name.endswith(".timer")):
-                continue
-            if name.startswith("bandwidth-data-check"):
-                continue  # 一次性安装校验单元，不该被复制回来
-            src = os.path.join(src_unit_dir, name)
-            dst = os.path.join(unit_dir, name)
+        # 4. 同步 systemd 单元（先备份，失败可回滚）
+        src_unit_dir = os.path.join(install_dir, "systemd")
+        if os.path.isdir(src_unit_dir) and os.path.isdir(unit_dir):
             try:
-                shutil.copy2(src, dst)
-                units_synced += 1
-            except Exception:
-                pass
-        if units_synced:
-            try:
-                subprocess.run(["systemctl", "daemon-reload"],
-                               capture_output=True, timeout=15)
-            except Exception:
-                pass
+                for name in os.listdir(src_unit_dir):
+                    if not (name.endswith(".service") or name.endswith(".timer")):
+                        continue
+                    if name.startswith("bandwidth-data-check"):
+                        continue  # 一次性安装校验单元，不该被复制回来
+                    src = os.path.join(src_unit_dir, name)
+                    dst = os.path.join(unit_dir, name)
+                    if os.path.exists(dst):
+                        with open(dst, "rb") as fh:
+                            unit_backups[name] = fh.read()
+                    else:
+                        unit_created.append(name)
+                    shutil.copy2(src, dst)
+                    units_synced += 1
+            except Exception as exc:
+                rollback_errors = _rollback_update(
+                    install_dir, backup_dir, backed, created,
+                    unit_dir, unit_backups, unit_created, services,
+                )
+                result["message"] = f"systemd 单元同步失败: {exc}"
+                if rollback_errors:
+                    result["message"] += "；回滚异常: " + "; ".join(rollback_errors)
+                return result
 
-    # 6. 重启所有服务
-    services = [
-        "bandwidth-monitor.service",
-        "route-monitor.service",
-        "bandwidth-analyzer.timer",
-        "bandwidth-maintenance.timer",
-        "bandwidth-daily-report.timer",
-    ]
-    restarted = []
-    for svc in services:
-        try:
-            subprocess.run(["systemctl", "restart", svc],
-                           capture_output=True, timeout=10)
+            if units_synced:
+                ok, err = _run_systemctl(["daemon-reload"], timeout=15)
+                if not ok:
+                    rollback_errors = _rollback_update(
+                        install_dir, backup_dir, backed, created,
+                        unit_dir, unit_backups, unit_created, services,
+                    )
+                    result["message"] = f"daemon-reload 失败: {err}"
+                    if rollback_errors:
+                        result["message"] += "；回滚异常: " + "; ".join(rollback_errors)
+                    return result
+
+        # 5. 重启所有服务，任一失败即回滚
+        restarted = []
+        for svc in services:
+            ok, err = _run_systemctl(["restart", svc], timeout=10)
+            if not ok:
+                rollback_errors = _rollback_update(
+                    install_dir, backup_dir, backed, created,
+                    unit_dir, unit_backups, unit_created, services,
+                )
+                result["message"] = f"服务 {svc} 重启失败: {err}"
+                if rollback_errors:
+                    result["message"] += "；回滚异常: " + "; ".join(rollback_errors)
+                return result
             restarted.append(svc)
+
+        # 6. 读取新版本号
+        new_version = "unknown"
+        try:
+            with open(os.path.join(install_dir, "config.py"), "r", encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("CURRENT_VERSION"):
+                        new_version = line.split('"')[1]
+                        break
         except Exception:
             pass
 
-    # 7. 清理临时文件
-    try:
-        shutil.rmtree(tmp_dir)
-    except Exception:
-        pass
-
-    # 8. 读取新版本号
-    new_version = "unknown"
-    try:
-        new_config = os.path.join(INSTALL_DIR, "config.py")
-        with open(new_config, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.startswith("CURRENT_VERSION"):
-                    new_version = line.split('"')[1]
-                    break
-    except Exception:
-        pass
-
-    result["success"] = True
-    result["version"] = new_version
-    result["message"] = (f"更新成功 → v{new_version}，已重启 {len(restarted)} 个服务"
-                         + (f"，同步 {units_synced} 个 systemd 单元" if units_synced else ""))
-    return result
+        result["success"] = True
+        result["version"] = new_version
+        result["message"] = (
+            f"更新成功 → v{new_version}，已重启 {len(restarted)} 个服务"
+            + (f"，同步 {units_synced} 个 systemd 单元" if units_synced else "")
+        )
+        return result
+    finally:
+        # 成功或已回滚才清理；回滚失败时保留临时目录，便于人工恢复。
+        if result["success"]:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        else:
+            rollback_failed = "回滚异常" in result.get("message", "")
+            if not rollback_failed:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            else:
+                result["message"] += f"（备份保留在 {tmp_dir}）"
